@@ -6,8 +6,9 @@
  *
  * The table's row-level security keeps each account to its own rows, so nothing here filters by
  * owner: a policy that let another account's rows through would show in the tests, not be hidden.
- * The table's trigger counts the revision and stamps the times, and the owner defaults to the
- * caller, so a write sends none of them. Every row read is checked before the queue sees it, since
+ * Every request is made as the queue's user, whatever another tab has signed in as since
+ * (`authorization`), so the owner the table defaults to the caller is that user. The table's
+ * trigger counts the revision and stamps the times, so a write sends none of them. Every row read is checked before the queue sees it, since
  * whatever wrote it may not be this editor.
  *
  * Errors: a request that never reached the account, a failure on its side, a session it no longer
@@ -100,21 +101,70 @@ function parsed<T>(schema: z.ZodType<T>, row: unknown): T {
   return read.data;
 }
 
+/**
+ * How many entries `list` asks for at a time. PostgREST cuts any answer to its `max_rows` (1000 in
+ * `supabase/config.toml`, as on hosted Supabase) without saying so, and a document the list left
+ * out would be taken as deleted on another device; so the list goes page by page, by id, until a
+ * page comes back empty, which holds whatever `max_rows` is.
+ */
+export const LIST_PAGE = 500;
+
 export class SupabaseServer implements SyncServer {
-  constructor(private readonly client: SupabaseClient) {}
+  /**
+   * `user` is the account the queue syncs: every request is made with that user's session, read
+   * when the request is made and pinned onto it, and none is made while the client holds another
+   * account's, as when another tab of this browser has signed in as someone else.
+   */
+  constructor(
+    private readonly client: SupabaseClient,
+    private readonly user: string,
+  ) {}
+
+  /**
+   * The `Authorization` a request of `user`'s carries. The client reads its session from the
+   * browser's storage, which every tab shares, at each request: another tab signing in as another
+   * account changes it under this one, which hears of it only later. So the session is read here,
+   * checked to be `user`'s, and its token set on the request itself, which the client then keeps.
+   * Another account's session, or none, passes (`ServerUnavailable`): the queue waits, and is
+   * stopped or moved to the new account as soon as this tab hears of it.
+   */
+  private async authorization(): Promise<string> {
+    const { data, error } = await this.client.auth.getSession();
+    const session = data.session;
+    if (error !== null || session === null)
+      throw new ServerUnavailable("the account's session could not be read", { cause: error });
+    if (session.user.id !== this.user)
+      throw new ServerUnavailable("this browser's session is now another account's");
+    return `Bearer ${session.access_token}`;
+  }
 
   async list(): Promise<ServerEntry[]> {
-    const answer = await this.client.from(TABLE).select("id, revision, updated_at");
-    if (answer.error) throw failureOf(answer, "list the documents");
-    return parsed(z.array(EntryRow), answer.data).map(({ id, revision, updated_at }) => ({
-      id,
-      revision,
-      updatedAt: updated_at,
-    }));
+    const entries: ServerEntry[] = [];
+    let after: string | undefined;
+    for (;;) {
+      const authorization = await this.authorization();
+      const page = this.client.from(TABLE).select("id, revision, updated_at");
+      const answer = await (after === undefined ? page : page.gt("id", after))
+        .order("id")
+        .limit(LIST_PAGE)
+        .setHeader("Authorization", authorization);
+      if (answer.error) throw failureOf(answer, "list the documents");
+      const rows = parsed(z.array(EntryRow), answer.data);
+      if (rows.length === 0) return entries;
+      for (const { id, revision, updated_at } of rows)
+        entries.push({ id, revision, updatedAt: updated_at });
+      after = rows[rows.length - 1]?.id;
+    }
   }
 
   async get(id: string): Promise<ServerDocument | null> {
-    const answer = await this.client.from(TABLE).select(COLUMNS).eq("id", id).maybeSingle();
+    const authorization = await this.authorization();
+    const answer = await this.client
+      .from(TABLE)
+      .select(COLUMNS)
+      .eq("id", id)
+      .setHeader("Authorization", authorization)
+      .maybeSingle();
     if (answer.error) throw failureOf(answer, "give the document");
     if (answer.data === null) return null;
     const row = parsed(DocumentRow, answer.data);
@@ -131,7 +181,9 @@ export class SupabaseServer implements SyncServer {
   }
 
   async insert(doc: Upload): Promise<WriteResult> {
-    // The owner, the revision and both times are the table's own.
+    const authorization = await this.authorization();
+    // The owner, the revision and both times are the table's own: the owner is the caller, whom
+    // `authorization` has made `user`.
     const answer = await this.client
       .from(TABLE)
       .insert({
@@ -142,6 +194,7 @@ export class SupabaseServer implements SyncServer {
         document: doc.document,
       })
       .select("revision, updated_at")
+      .setHeader("Authorization", authorization)
       .single();
     // The id is taken, by this account or, out of sight, another's.
     if (answer.error?.code === "23505") return { ok: false, reason: "conflict" };
@@ -150,24 +203,36 @@ export class SupabaseServer implements SyncServer {
   }
 
   async update(doc: Upload, expectedRevision: number): Promise<WriteResult> {
+    const authorization = await this.authorization();
     // The kind stays as the insert set it; the trigger counts the revision on.
     const answer = await this.client
       .from(TABLE)
       .update({ template_id: doc.templateId, title: doc.title, document: doc.document })
       .eq("id", doc.id)
       .eq("revision", expectedRevision)
-      .select("revision, updated_at");
+      .select("revision, updated_at")
+      .setHeader("Authorization", authorization);
     if (answer.error) throw failureOf(answer, "keep the document");
     const rows = parsed(z.array(z.unknown()), answer.data);
     if (rows.length > 0) return writtenOf(rows[0]);
     // No row at that revision: it moved on, or it is gone.
-    const found = await this.client.from(TABLE).select("id").eq("id", doc.id).maybeSingle();
+    const found = await this.client
+      .from(TABLE)
+      .select("id")
+      .eq("id", doc.id)
+      .setHeader("Authorization", authorization)
+      .maybeSingle();
     if (found.error) throw failureOf(found, "say whether the document is there");
     return { ok: false, reason: found.data === null ? "missing" : "conflict" };
   }
 
   async remove(id: string): Promise<void> {
-    const answer = await this.client.from(TABLE).delete().eq("id", id);
+    const authorization = await this.authorization();
+    const answer = await this.client
+      .from(TABLE)
+      .delete()
+      .eq("id", id)
+      .setHeader("Authorization", authorization);
     if (answer.error) throw failureOf(answer, "delete the document");
   }
 }

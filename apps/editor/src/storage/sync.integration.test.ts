@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Account, type Place } from "../account/account";
-import { createAccountClient, type SessionStorage } from "../account/client";
+import { createAccountClient, type SessionStorage, STORAGE_KEY } from "../account/client";
 import { apply, type Document } from "../editor/document";
 import { curated } from "../templates/curated";
 import {
@@ -14,7 +14,7 @@ import {
   type Upload,
 } from "./server";
 import { COPY_SUFFIX, DocumentStore } from "./store";
-import { SupabaseServer } from "./supabase-server";
+import { LIST_PAGE, SupabaseServer } from "./supabase-server";
 import { type SyncEvent, SyncQueue } from "./sync";
 
 // The sync queue on the local Supabase stack (milestone 4 item 7, decisions 0092, 0093 and 0098):
@@ -113,6 +113,7 @@ describe.skipIf(!url || !key || !mailpit)("syncing documents with the local stac
     `${name}.${Date.now()}.${Math.floor(Math.random() * 1e6)}@example.test`;
   const email = invent("sync");
   const otherEmail = invent("sync-other");
+  const thirdEmail = invent("sync-third");
   const clients: SupabaseClient[] = [];
   const closing: (() => Promise<void>)[] = [];
   let devices = 0;
@@ -143,7 +144,9 @@ describe.skipIf(!url || !key || !mailpit)("syncing documents with the local stac
   }
 
   /** Sign a new device in as `to` by the email link, as the page does; its client and user id. */
-  async function signedIn(to: string): Promise<{ client: SupabaseClient; user: string }> {
+  async function signedIn(
+    to: string,
+  ): Promise<{ client: SupabaseClient; user: string; storage: SessionStorage }> {
     const storage = memory();
     const client = await createAccountClient(config, { storage });
     clients.push(client);
@@ -163,7 +166,7 @@ describe.skipIf(!url || !key || !mailpit)("syncing documents with the local stac
     expect(page.state().status).toBe("signed-in");
     const user = page.userId();
     if (user === undefined) throw new Error("signed in without a user id");
-    return { client, user };
+    return { client, user, storage };
   }
 
   /** A device: a store on an IndexedDB of its own, and a queue beside it, signed in as `user`. */
@@ -171,7 +174,7 @@ describe.skipIf(!url || !key || !mailpit)("syncing documents with the local stac
     const idb = { indexedDB: new IDBFactory(), IDBKeyRange };
     const store = new DocumentStore({ name: `sync-integration-${++devices}`, idb });
     const queue = new SyncQueue({ store, locks: null, page: null });
-    const server = new Switchable(new SupabaseServer(client));
+    const server = new Switchable(new SupabaseServer(client, user));
     const events: SyncEvent[] = [];
     queue.on((event) => events.push(event));
     closing.push(async () => {
@@ -190,12 +193,13 @@ describe.skipIf(!url || !key || !mailpit)("syncing documents with the local stac
     };
   }
 
-  let ada: { client: SupabaseClient; user: string };
-  let other: { client: SupabaseClient; user: string };
+  let ada: Awaited<ReturnType<typeof signedIn>>;
+  let other: Awaited<ReturnType<typeof signedIn>>;
 
   beforeAll(async () => {
     await clearTo(email);
     await clearTo(otherEmail);
+    await clearTo(thirdEmail);
     ada = await signedIn(email);
     other = await signedIn(otherEmail);
   });
@@ -205,6 +209,7 @@ describe.skipIf(!url || !key || !mailpit)("syncing documents with the local stac
     for (const client of clients) await client.auth.stopAutoRefresh();
     await clearTo(email);
     await clearTo(otherEmail);
+    await clearTo(thirdEmail);
   });
 
   /** The two devices of the one account, each signed in on a client of its own. */
@@ -278,7 +283,7 @@ describe.skipIf(!url || !key || !mailpit)("syncing documents with the local stac
     await eventually(() => b.inStep(copied.copy));
 
     // The account holds both: A's under the id, B's as a new document.
-    const account = new SupabaseServer(ada.client);
+    const account = new SupabaseServer(ada.client, ada.user);
     expect(firstName(await account.get(id))).toBe("Asa");
     const copy = await account.get(copied.copy);
     expect(copy).toMatchObject({ title: `Bea Rask${COPY_SUFFIX}`, revision: 1 });
@@ -301,7 +306,7 @@ describe.skipIf(!url || !key || !mailpit)("syncing documents with the local stac
     await b.store.flush();
     await a.queue.remove(gone);
     await a.queue.remove(edited);
-    const account = new SupabaseServer(ada.client);
+    const account = new SupabaseServer(ada.client, ada.user);
     await eventually(async () => (await account.get(gone)) === null);
     await eventually(async () => (await account.get(edited)) === null);
 
@@ -326,7 +331,7 @@ describe.skipIf(!url || !key || !mailpit)("syncing documents with the local stac
     const c = device(other.client, other.user);
     await c.open();
     expect(await c.store.syncRows()).toEqual([]);
-    const theirs = new SupabaseServer(other.client);
+    const theirs = new SupabaseServer(other.client, other.user);
     expect(await theirs.list()).toEqual([]);
     expect(await theirs.get(mine)).toBeNull();
     // Nor can it write over it, or delete it.
@@ -336,12 +341,12 @@ describe.skipIf(!url || !key || !mailpit)("syncing documents with the local stac
     );
     expect(result).toEqual({ ok: false, reason: "missing" });
     await theirs.remove(mine);
-    expect(await new SupabaseServer(ada.client).get(mine)).not.toBeNull();
+    expect(await new SupabaseServer(ada.client, ada.user).get(mine)).not.toBeNull();
   });
 
   it("saves a document holding U+0000 and a lone surrogate cleaned, which the table would refuse", async () => {
     const { a } = await devicesOfAda();
-    const account = new SupabaseServer(ada.client);
+    const account = new SupabaseServer(ada.client, ada.user);
     // Sent as it is, the table refuses either, and the server says so as final.
     for (const first of ["Nul\u0000l", "Lone\uD800"]) {
       const refused = await account
@@ -371,7 +376,7 @@ describe.skipIf(!url || !key || !mailpit)("syncing documents with the local stac
 
   it("refuses an oversize document without a request and never tries it again; the table's own refusals are final too", async () => {
     const { a } = await devicesOfAda();
-    const account = new SupabaseServer(ada.client);
+    const account = new SupabaseServer(ada.client, ada.user);
     const id = await a.store.create("jake", resumeOf("Zeno", "Brix"), "en-GB");
     await eventually(() => a.inStep(id));
     const held = await a.store.get(id);
@@ -416,5 +421,86 @@ describe.skipIf(!url || !key || !mailpit)("syncing documents with the local stac
     expect(refused).toBeInstanceOf(ServerRefused);
     expect((refused as ServerRefused).code).toBe("23514");
     await a.queue.signIn(ada.user, a.server);
+  }, 30_000);
+
+  it("asks nothing of the account as one user while the client holds another's session", async () => {
+    // As when another tab of this browser has signed in as someone else: the client's session is
+    // the other account's, and the queue still syncs the first's until it hears of it.
+    const stale = new SupabaseServer(other.client, ada.user);
+    const id = crypto.randomUUID();
+    const upload: Upload = {
+      id,
+      kind: "template",
+      templateId: "jake",
+      title: "Not Theirs",
+      document: {},
+    };
+    for (const call of [
+      () => stale.list(),
+      () => stale.get(id),
+      () => stale.insert(upload),
+      () => stale.update(upload, 1),
+      () => stale.remove(id),
+    ])
+      await expect(call()).rejects.toBeInstanceOf(ServerUnavailable);
+    expect(await new SupabaseServer(other.client, other.user).get(id)).toBeNull();
+    expect(await new SupabaseServer(ada.client, ada.user).get(id)).toBeNull();
+  });
+
+  it("makes a request as the queue's user even when another account's session is stored under it", async () => {
+    const mine = await signedIn(email);
+    const third = await signedIn(thirdEmail);
+    const theirSession = third.storage.getItem(STORAGE_KEY);
+    if (theirSession === null) throw new Error("no session stored");
+    // Once the server has read the session, another tab signs this browser in as the third
+    // account: the client reads that session from storage for the request itself.
+    const auth = mine.client.auth;
+    const racing = new Proxy(mine.client, {
+      get(target, property) {
+        if (property !== "auth") return Reflect.get(target, property);
+        return new Proxy(auth, {
+          get(inner, name) {
+            if (name !== "getSession") return Reflect.get(inner, name);
+            return async () => {
+              const read = await inner.getSession();
+              mine.storage.setItem(STORAGE_KEY, theirSession);
+              return read;
+            };
+          },
+        });
+      },
+    });
+    const id = crypto.randomUUID();
+    const written = await new SupabaseServer(racing, ada.user).insert({
+      id,
+      kind: "template",
+      templateId: "jake",
+      title: "Whose Row",
+      document: {},
+    });
+    expect(written).toMatchObject({ ok: true, revision: 1 });
+    expect(await new SupabaseServer(third.client, third.user).list()).toEqual([]);
+    expect((await new SupabaseServer(ada.client, ada.user).get(id))?.title).toBe("Whose Row");
+  });
+
+  it("lists every document of an account past what one answer of the account holds", async () => {
+    const theirs = new SupabaseServer(other.client, other.user);
+    const before = (await theirs.list()).length;
+    // More than PostgREST's `max_rows` (1000) gives in one answer.
+    const rows = Array.from({ length: 1005 }, (_, at) => ({
+      id: crypto.randomUUID(),
+      kind: "template",
+      template_id: "jake",
+      title: `Many ${at}`,
+      document: {},
+    }));
+    const inserted = await other.client.from("documents").insert(rows);
+    expect(inserted.error).toBeNull();
+    const listed = await theirs.list();
+    expect(listed).toHaveLength(before + rows.length);
+    expect(listed.length).toBeGreaterThan(2 * LIST_PAGE);
+    const ids = new Set(listed.map(({ id }) => id));
+    expect(rows.every(({ id }) => ids.has(id))).toBe(true);
+    await other.client.from("documents").delete().like("title", "Many %");
   }, 30_000);
 });

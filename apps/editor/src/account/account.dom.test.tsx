@@ -917,7 +917,7 @@ describe("the account's documents (item 7)", () => {
     act(() => root.render(<App account={new Account({ load })} />));
     await settle();
     await click("Sign out");
-    expect(host.textContent).toContain(unsentNotice([title]));
+    expect(host.textContent).toContain(unsentNotice([{ title }]));
     expect(host.textContent).toContain(`Signed in as ${EMAIL}`);
     expect(asked.signOuts).toEqual([]);
 

@@ -26,12 +26,15 @@ export interface SyncState {
    * person answers it; 0 when there is no question.
    */
   question: number;
-  /** The documents whose saves had not reached the account when signing out was asked for. */
-  unsent?: { id: string; title: string }[];
+  /**
+   * The documents not in the account when signing out was asked for: saves not sent yet, or
+   * `refused` by the account as they are (decision 0098).
+   */
+  unsent?: { id: string; title: string; refused?: true }[];
 }
 
-/** Makes the server the queue sends to, from the account's client. */
-export type ServerMaker = (client: SupabaseClient) => SyncServer;
+/** Makes the server the queue sends to as `user`, from the account's client. */
+export type ServerMaker = (client: SupabaseClient, user: string) => SyncServer;
 
 const NOTHING: SyncState = { question: 0 };
 
@@ -45,7 +48,10 @@ export class AccountSync {
   readonly #listeners = new Set<() => void>();
   readonly #events = new Set<(event: SyncEvent) => void>();
 
-  constructor(account: Account, makeServer: ServerMaker = (client) => new SupabaseServer(client)) {
+  constructor(
+    account: Account,
+    makeServer: ServerMaker = (client, user) => new SupabaseServer(client, user),
+  ) {
     this.#account = account;
     this.#makeServer = makeServer;
   }
@@ -120,7 +126,7 @@ export class AccountSync {
       const result = await queue.signOut({ discard });
       if (!result.done) {
         this.#set({ ...this.#state, unsent: result.unsent });
-        return unsentNotice(result.unsent.map(({ title }) => title));
+        return unsentNotice(result.unsent);
       }
     }
     this.#set(NOTHING);
@@ -150,7 +156,7 @@ export class AccountSync {
       .then((client) => {
         // Overtaken: another user, a sign-out, or another store, since this was asked.
         if (this.#queue !== queue || this.#target !== user) return;
-        return queue.signIn(user, this.#makeServer(client));
+        return queue.signIn(user, this.#makeServer(client, user));
       })
       .catch((error: unknown) => {
         console.error("Syncing with the account could not start:", error);

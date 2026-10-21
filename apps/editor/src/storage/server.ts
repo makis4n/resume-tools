@@ -128,7 +128,7 @@ export function cleanString(text: string): string {
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
 
 /** A JSON value with every string in it, keys included, cleaned (`cleanString`). */
-function cleanJson(value: unknown): unknown {
+export function cleanJson(value: unknown): unknown {
   if (typeof value === "string") return cleanString(value);
   if (Array.isArray(value)) return value.map(cleanJson);
   if (typeof value !== "object" || value === null) return value;

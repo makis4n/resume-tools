@@ -7,7 +7,14 @@ import type { Imported, ImportReport } from "../import/run";
 import { curated } from "../templates/curated";
 import type { TemplatePackage } from "../templates/package";
 import { FakeAccounts, FakeLocks } from "./fake-server";
-import { cleanUpload, MAX_DOCUMENT_BYTES, MAX_SENT_TITLE, ServerRefused } from "./server";
+import {
+  cleanUpload,
+  MAX_DOCUMENT_BYTES,
+  MAX_SENT_TITLE,
+  ServerRefused,
+  ServerUnavailable,
+  type SyncServer,
+} from "./server";
 import { COPY_SUFFIX, DocumentStore, type PageEvents, type Stored } from "./store";
 import {
   type Locks,
@@ -860,7 +867,7 @@ describe("what is sent, and what the account refuses (decision 0098)", () => {
     // Signing out names it, since the account does not have it, and removes nothing.
     expect(await queue.signOut()).toEqual({
       done: false,
-      unsent: [{ id, title: "Mara Quist" }],
+      unsent: [{ id, title: "Mara Quist", refused: true }],
     });
     expect(accounts.count("insert")).toBe(1);
 
@@ -869,6 +876,77 @@ describe("what is sent, and what the account refuses (decision 0098)", () => {
     await rename(store, id, "Ada");
     await eventually(() => firstName(accounts.document(ADA, id)) === "Ada");
     expect(accounts.count("insert")).toBe(2);
+    await eventually(async () => (await store.places()).get(id) === "in-account");
+  });
+
+  it("sends a deletion made while a refused update was on its way", async () => {
+    const accounts = new FakeAccounts();
+    const { store, queue } = device().tab();
+    const server = accounts.server(ADA);
+    await queue.signIn(ADA, server);
+    const id = await store.create("jake", sample);
+    await eventually(() => accounts.count("insert") === 1);
+    await quiet(queue);
+    await vi.advanceTimersByTimeAsync(SEND_INTERVAL);
+
+    // An update the account will refuse is on its way when the person deletes the document.
+    server.refuse("23514");
+    const release = server.pause();
+    const tries = server.tries;
+    await rename(store, id, "Ada");
+    await eventually(() => server.tries > tries);
+    await queue.remove(id);
+    release();
+    await eventually(() => accounts.count("update") === 1);
+    await quiet(queue);
+    server.accept();
+    await vi.advanceTimersByTimeAsync(MAX_WAIT * 3);
+    await quiet(queue);
+
+    // The refusal was of the content; the deletion goes, and nothing is left behind.
+    expect(accounts.count("remove")).toBe(1);
+    expect(accounts.document(ADA, id)).toBeUndefined();
+    expect(await store.syncRows()).toEqual([]);
+    expect(await queue.signOut()).toEqual({ done: true });
+  });
+
+  it("takes its own cleaned write, come back as a conflict, as the same document and not a copy", async () => {
+    const accounts = new FakeAccounts();
+    const { store, queue, events } = device().tab();
+    const inner = accounts.server(ADA);
+    // The account takes an update, and the answer is lost on the way back.
+    let loseAnswer = false;
+    const server: SyncServer = {
+      list: () => inner.list(),
+      get: (id) => inner.get(id),
+      insert: (doc) => inner.insert(doc),
+      update: async (doc, expected) => {
+        const result = await inner.update(doc, expected);
+        if (loseAnswer) {
+          loseAnswer = false;
+          throw new ServerUnavailable();
+        }
+        return result;
+      },
+      remove: (id) => inner.remove(id),
+    };
+    await queue.signIn(ADA, server);
+    const id = await store.create("jake", sample);
+    await eventually(() => accounts.count("insert") === 1);
+    await quiet(queue);
+    await vi.advanceTimersByTimeAsync(SEND_INTERVAL);
+
+    loseAnswer = true;
+    await saveFirst(store, id, "A\u0000da");
+    await eventually(() => accounts.count("update") === 1);
+    // Tried again over the revision it last knew: a conflict, with what it sent itself, cleaned.
+    await vi.advanceTimersByTimeAsync(MAX_WAIT);
+    await eventually(() => accounts.count("update") === 2);
+    await quiet(queue);
+    expect(events.filter((event) => event.type === "copied")).toEqual([]);
+    expect(await store.list()).toHaveLength(1);
+    expect(firstName(accounts.document(ADA, id))).toBe("Ada");
+    expect(accounts.documents(ADA)).toHaveLength(1);
     await eventually(async () => (await store.places()).get(id) === "in-account");
   });
 });

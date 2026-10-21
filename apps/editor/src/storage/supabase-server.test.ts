@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
 import { ServerRefused, ServerUnavailable, type Upload } from "./server";
-import { SupabaseServer } from "./supabase-server";
+import { LIST_PAGE, SupabaseServer } from "./supabase-server";
 
 // The server over the `documents` table, on a stand-in for the client's query builder: what it
 // asks the table, and what each answer, PostgREST's or a failed request's, comes to for the queue.
@@ -13,15 +13,46 @@ interface Answer {
   status: number;
 }
 
-/** A client whose every query answers the next of `answers`, noting what each asked. */
+const USER = "00000000-0000-4000-8000-0000000000a1";
+const OTHER = "00000000-0000-4000-8000-0000000000b2";
+const TOKEN = "token-of-the-queue-user";
+const AUTHORIZED = ["setHeader", "Authorization", `Bearer ${TOKEN}`];
+
+/** A session as the client keeps it: whose, and its token. */
+interface Session {
+  user: { id: string };
+  access_token: string;
+}
+
+/**
+ * A client whose every query answers the next of `answers`, noting what each asked, and whose
+ * session is `session` (the queue's user's, by default) whenever it is read.
+ */
 function clientAnswering(...answers: Answer[]) {
+  return clientOf({ user: { id: USER }, access_token: TOKEN }, ...answers);
+}
+
+function clientOf(session: Session | null, ...answers: Answer[]) {
   const asked: unknown[][][] = [];
   const client = {
+    auth: { getSession: async () => ({ data: { session }, error: null }) },
     from(table: string) {
       const calls: unknown[][] = [["from", table]];
       asked.push(calls);
       const builder: Record<string, unknown> = {};
-      for (const method of ["select", "eq", "maybeSingle", "single", "insert", "update", "delete"])
+      for (const method of [
+        "select",
+        "eq",
+        "gt",
+        "order",
+        "limit",
+        "setHeader",
+        "maybeSingle",
+        "single",
+        "insert",
+        "update",
+        "delete",
+      ])
         builder[method] = (...args: unknown[]) => {
           calls.push([method, ...args]);
           return builder;
@@ -35,7 +66,7 @@ function clientAnswering(...answers: Answer[]) {
       return builder;
     },
   };
-  return { server: new SupabaseServer(client as unknown as SupabaseClient), asked };
+  return { server: new SupabaseServer(client as unknown as SupabaseClient, USER), asked };
 }
 
 const UPLOAD: Upload = {
@@ -56,20 +87,85 @@ const T1 = "2026-10-21T12:00:00.123456+00:00";
 const T2 = "2026-10-21T12:05:00+00:00";
 
 describe("SupabaseServer", () => {
-  it("lists the account's documents by id, revision and time, without an owner filter", async () => {
-    const { server, asked } = clientAnswering({
-      data: [{ id: UPLOAD.id, revision: 3, updated_at: T1 }],
-      status: 200,
+  it("lists the account's documents by id, revision and time, page by page, without an owner filter", async () => {
+    const page = (from: number, count: number) =>
+      Array.from({ length: count }, (_, at) => ({
+        id: `00000000-0000-4000-8000-${String(from + at).padStart(12, "0")}`,
+        revision: 3,
+        updated_at: T1,
+      }));
+    // The account's answers cut short, as PostgREST's `max_rows` cuts them, whatever was asked.
+    const first = page(0, 7);
+    const second = page(7, 2);
+    const { server, asked } = clientAnswering(
+      { data: first, status: 200 },
+      { data: second, status: 200 },
+      { data: [], status: 200 },
+    );
+    const listed = await server.list();
+    expect(listed).toHaveLength(9);
+    expect(listed[0]).toEqual({
+      id: first[0]?.id,
+      revision: 3,
+      updatedAt: Date.parse("2026-10-21T12:00:00.123Z"),
     });
-    expect(await server.list()).toEqual([
-      { id: UPLOAD.id, revision: 3, updatedAt: Date.parse("2026-10-21T12:00:00.123Z") },
-    ]);
+    expect(listed.map(({ id }) => id)).toEqual([...first, ...second].map(({ id }) => id));
     expect(asked).toEqual([
       [
         ["from", "documents"],
         ["select", "id, revision, updated_at"],
+        ["order", "id"],
+        ["limit", LIST_PAGE],
+        AUTHORIZED,
+      ],
+      [
+        ["from", "documents"],
+        ["select", "id, revision, updated_at"],
+        ["gt", "id", first[6]?.id],
+        ["order", "id"],
+        ["limit", LIST_PAGE],
+        AUTHORIZED,
+      ],
+      [
+        ["from", "documents"],
+        ["select", "id, revision, updated_at"],
+        ["gt", "id", second[1]?.id],
+        ["order", "id"],
+        ["limit", LIST_PAGE],
+        AUTHORIZED,
       ],
     ]);
+  });
+
+  it("makes every request with the queue user's session, and none while the client holds another's", async () => {
+    const { server, asked } = clientAnswering(
+      { data: null, status: 200 },
+      { data: { revision: 1, updated_at: T1 }, status: 201 },
+      { data: [], status: 200 },
+      { data: null, status: 200 },
+      { status: 204 },
+    );
+    await server.get(UPLOAD.id);
+    await server.insert(UPLOAD);
+    await server.update(UPLOAD, 1);
+    await server.remove(UPLOAD.id);
+    expect(asked).toHaveLength(5);
+    for (const calls of asked) expect(calls).toContainEqual(AUTHORIZED);
+
+    // Another tab signed this browser in as another account, or out: nothing is asked of the
+    // account, and the queue waits until it is moved to that account or stopped.
+    for (const session of [{ user: { id: OTHER }, access_token: "theirs" }, null]) {
+      const { server: stale, asked: none } = clientOf(session);
+      for (const call of [
+        () => stale.list(),
+        () => stale.get(UPLOAD.id),
+        () => stale.insert(UPLOAD),
+        () => stale.update(UPLOAD, 1),
+        () => stale.remove(UPLOAD.id),
+      ])
+        await expect(call()).rejects.toBeInstanceOf(ServerUnavailable);
+      expect(none).toEqual([]);
+    }
   });
 
   it("reads one document whole, in the queue's names, and none when there is no row", async () => {
@@ -113,7 +209,7 @@ describe("SupabaseServer", () => {
     await expect(server.list()).rejects.toThrow("cannot read");
   });
 
-  it("inserts the row without owner, revision or times, and takes a taken id as a conflict", async () => {
+  it("inserts the row without owner, revision or times, as the queue's user, and takes a taken id as a conflict", async () => {
     const { server, asked } = clientAnswering(
       { data: { revision: 1, updated_at: T1 }, status: 201 },
       failure("23505", 409),
@@ -136,6 +232,7 @@ describe("SupabaseServer", () => {
         },
       ],
       ["select", "revision, updated_at"],
+      AUTHORIZED,
       ["single"],
     ]);
     expect(await server.insert(UPLOAD)).toEqual({ ok: false, reason: "conflict" });
@@ -160,6 +257,7 @@ describe("SupabaseServer", () => {
       ["eq", "id", UPLOAD.id],
       ["eq", "revision", 3],
       ["select", "revision, updated_at"],
+      AUTHORIZED,
     ]);
     expect(await server.update(UPLOAD, 3)).toEqual({ ok: false, reason: "conflict" });
     expect(await server.update(UPLOAD, 3)).toEqual({ ok: false, reason: "missing" });
@@ -168,7 +266,12 @@ describe("SupabaseServer", () => {
   it("deletes by id", async () => {
     const { server, asked } = clientAnswering({ status: 204 });
     await server.remove(UPLOAD.id);
-    expect(asked[0]).toEqual([["from", "documents"], ["delete"], ["eq", "id", UPLOAD.id]]);
+    expect(asked[0]).toEqual([
+      ["from", "documents"],
+      ["delete"],
+      ["eq", "id", UPLOAD.id],
+      AUTHORIZED,
+    ]);
   });
 
   it("takes a failed request, a failure on the account's side, an ended session and too many requests as passing", async () => {

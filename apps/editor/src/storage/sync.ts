@@ -95,8 +95,13 @@ export type SyncEvent =
   /** Where documents are may have moved (`places`): the list's marks are worth reading again. */
   | { type: "places" };
 
-/** What signing out came to: done, or the documents whose saves could not be sent, kept. */
-export type SignOut = { done: true } | { done: false; unsent: { id: string; title: string }[] };
+/**
+ * What signing out came to: done, or the documents not in the account, kept: their saves could not
+ * be sent, or the account `refused` them as they are (decision 0098), which waiting cannot change.
+ */
+export type SignOut =
+  | { done: true }
+  | { done: false; unsent: { id: string; title: string; refused?: true }[] };
 
 export interface SyncOptions {
   store: DocumentStore;
@@ -288,7 +293,14 @@ export class SyncQueue {
       );
       if (left.length > 0) {
         this.pump();
-        return { done: false, unsent: left.map(({ id, title }) => ({ id, title })) };
+        return {
+          done: false,
+          unsent: left.map(({ id, title, refused }) => ({
+            id,
+            title,
+            ...(refused ? { refused: true as const } : {}),
+          })),
+        };
       }
     }
     this.stop();

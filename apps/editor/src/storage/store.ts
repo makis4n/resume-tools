@@ -49,7 +49,7 @@ import type { Upload } from "../import/intake";
 import type { Imported, ImportJob, ImportReport } from "../import/run";
 import { CURATED } from "../templates/curated";
 import { IMPORTED_PREFIX, TemplatePackage } from "../templates/package";
-import type { DocumentKind, ServerDocument } from "./server";
+import { cleanJson, type DocumentKind, type ServerDocument } from "./server";
 
 /** A document as stored: the list's columns beside the document, so listing parses nothing. */
 interface DocumentRow {
@@ -869,13 +869,14 @@ export class DocumentStore {
   /**
    * The account refused a document as its row was at revision `refused`, in a way sending it again
    * cannot change (decision 0098): the row is marked so, and the queue sends it no more until a
-   * save makes a new revision. A row that has moved on since is left for the queue to send.
+   * save makes a new revision. A row that has moved on since is left for the queue to send, and so
+   * is one deleted meanwhile, whose deletion the refusal of its content must not hold back.
    */
   async markRefused(id: string, refused: number): Promise<void> {
     const documents = this.db.documents;
     const marked = await this.db.transaction("rw", documents, async () => {
       const row = await documents.get(id);
-      if (row === undefined || revisionOf(row) !== refused) return false;
+      if (row === undefined || row.removed === true || revisionOf(row) !== refused) return false;
       await documents.put({ ...row, refused });
       return true;
     });
@@ -951,7 +952,8 @@ export class DocumentStore {
         return { outcome: "none" };
       if (row?.serverRevision !== undefined && row.serverRevision >= doc.revision)
         return { outcome: "none" };
-      if (row !== undefined && sameJson(row.document, doc.document)) {
+      // What this device sent was cleaned (`cleanUpload`), so its own write comes back cleaned.
+      if (row !== undefined && sameJson(cleanJson(row.document), doc.document)) {
         const same = { ...row, serverRevision: doc.revision, pending: false };
         await documents.put(same);
         return { outcome: "same", kept: keptOf(same) };
@@ -1444,7 +1446,8 @@ function syncRowOf(row: DocumentRow): SyncRow {
     pending: row.pending === true,
     removed: row.removed === true,
     firstPass: firstPassRow(row),
-    refused: row.refused !== undefined && row.refused === revisionOf(row),
+    // A deletion is always sent, whatever the account refused of the content.
+    refused: row.removed !== true && row.refused !== undefined && row.refused === revisionOf(row),
     document: row.document,
   };
 }

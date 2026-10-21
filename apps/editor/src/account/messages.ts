@@ -241,10 +241,23 @@ export function messageFor(error: unknown, moment: Moment): string {
 }
 
 /**
- * Signing out stopped before removing anything, since some documents' saves have not reached the
- * account (decision 0092): it names them, and the person stays signed in. Item 9 asks whether to
- * sign out all the same.
+ * Signing out stopped before removing anything, since some documents are not in the account
+ * (decision 0092): it names them, and the person stays signed in. A document whose saves have not
+ * been sent yet waits for the connection; one the account refused (decision 0098, `refused`) is
+ * never sent as it is, so waiting cannot help: it has to change, or go. Item 9 asks whether to sign
+ * out all the same.
  */
-export function unsentNotice(titles: readonly string[]): string {
-  return `You are still signed in: some changes have not been saved to your account yet, so nothing was removed from this browser. Not saved yet: ${titles.join(", ")}. Try again once you are online.`;
+export function unsentNotice(unsent: readonly { title: string; refused?: boolean }[]): string {
+  const waiting = unsent.filter((each) => each.refused !== true).map(({ title }) => title);
+  const refused = unsent.filter((each) => each.refused === true).map(({ title }) => title);
+  const said = [
+    "You are still signed in: some documents are not in your account yet, so nothing was removed from this browser.",
+  ];
+  if (waiting.length > 0)
+    said.push(`Not saved yet: ${waiting.join(", ")}. Try again once you are online.`);
+  if (refused.length > 0)
+    said.push(
+      `Your account could not keep: ${refused.join(", ")}, most likely because it is too large. Make it smaller or delete it, then sign out again.`,
+    );
+  return said.join(" ");
 }
