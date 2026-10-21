@@ -325,7 +325,8 @@ export function App() {
     },
     update: (doc) => compiler.current?.update(doc),
     create: async (template, resume) => {
-      const id = await store.current?.create(template, resume, navigator.language);
+      // A PDF import's draft, which an account keeps as such (decision 0091).
+      const id = await store.current?.create(template, resume, navigator.language, "pdf");
       if (id === undefined) throw new Error("the store is closed");
       return id;
     },

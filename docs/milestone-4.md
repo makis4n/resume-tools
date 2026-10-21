@@ -326,7 +326,7 @@ it; from item 7 on, Stage 2 uses item 4's client.
 
 ### Stage 2. Saving to the account
 
-6. [ ] **The queue, on a fake.** Store version 3 with `owner`, `serverRevision` and `pending`; the
+6. [x] **The queue, on a fake.** Store version 3 with `owner`, `serverRevision` and `pending`; the
    queue against the server interface, with the Web Lock; and the in-memory fake. Done when unit
    tests cover each rule of decision 0092: send, revision check, conflict copy, bringing documents
    in, an open document changed elsewhere, offline and back, the first sign-in's question, sign-out
