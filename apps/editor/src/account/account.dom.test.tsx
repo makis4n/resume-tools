@@ -7,7 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App";
 import { AccountEntry } from "./AccountEntry";
-import { Account } from "./account";
+import { Account, RECOVERING_KEY } from "./account";
 import { type SessionStorage, STORAGE_KEY, VERIFIER_KEY, verifierKeyOf } from "./client";
 import {
   ANOTHER_BROWSER,
@@ -20,12 +20,13 @@ import {
   PASSWORD_HINT,
   PASSWORD_RULE,
   SAME_PASSWORD,
+  SIGNED_IN_TOO_LONG_AGO,
   TOO_MANY,
   WRONG_CURRENT,
   WRONG_PASSWORD,
 } from "./messages";
 import { PASSWORD_SET } from "./NewPassword";
-import { TYPE_EMAIL, TYPE_PASSWORD } from "./SignInPanel";
+import { MAKE_ACCOUNT_NOTE, TYPE_EMAIL, TYPE_PASSWORD } from "./SignInPanel";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -480,82 +481,57 @@ describe("a stored session", () => {
 });
 
 describe("the email and password", () => {
-  it("states the rule before a new password is submitted, and refuses one that breaks it unsent", async () => {
+  it("makes an account by email alone, back to this page, and asks for the password after the link", async () => {
+    window.history.replaceState(null, "", "/editor/?x=1");
     const { asked, load } = fake();
     await entry(new Account({ load }));
     await click("Sign in");
-    // Signing in needs no rule stated; making an account does, before anything is pressed.
+    // Signing in states no rule; making an account takes no password before the link (0099).
     expect(host.textContent).not.toContain(PASSWORD_HINT);
     await click("Make an account");
-    expect(host.textContent).toContain(PASSWORD_HINT);
-    const input = field("Password");
-    expect(input.getAttribute("autocomplete")).toBe("new-password");
-    const hint = document.getElementById(input.getAttribute("aria-describedby") ?? "");
-    expect(hint?.textContent).toBe(PASSWORD_HINT);
+    expect(host.textContent).toContain(MAKE_ACCOUNT_NOTE);
+    expect(host.querySelector('input[type="password"]')).toBeNull();
 
-    await withPassword(EMAIL, "seven77", "Make account");
-    expect(host.textContent).toContain(PASSWORD_RULE);
-    // 37 characters, but 73 bytes: too long for bcrypt, so refused.
-    await withPassword(EMAIL, TOO_LONG, "Make account");
-    expect(host.textContent).toContain(PASSWORD_RULE);
-    await withPassword(EMAIL, "", "Make account");
-    expect(host.textContent).toContain(TYPE_PASSWORD);
-    await withPassword("not an address", PASSWORD, "Make account");
+    await withPassword("", undefined, "Make account");
+    expect(host.textContent).toContain(TYPE_EMAIL);
+    await withPassword("not an address", undefined, "Make account");
     expect(host.textContent).toContain(BAD_ADDRESS);
-    expect(asked.signUps).toEqual([]);
-    expect(asked.loads).toBe(1);
-  });
+    expect(asked.otp).toEqual([]);
 
-  it("takes 72 bytes, and 8 characters however many bytes they take", async () => {
-    const { asked, load } = fake();
-    await entry(new Account({ load }));
-    await click("Sign in");
-    await click("Make an account");
-    await withPassword(EMAIL, `${"é".repeat(36)}`, "Make account");
-    expect(asked.signUps.map((each) => each.password)).toEqual(["é".repeat(36)]);
-    await click("Back to sign in");
-    await click("Make an account");
-    await withPassword(EMAIL, "ééééàààà", "Make account");
-    expect(asked.signUps).toHaveLength(2);
-  });
-
-  it("signs up back to this page and says to check the email, the same for an address already known", async () => {
-    window.history.replaceState(null, "", "/editor/?x=1");
-    const known = fake({ signUpError: authError("user_already_exists") });
-    await entry(new Account({ load: known.load }));
-    await click("Sign in");
-    await click("Make an account");
-    await withPassword(` ${EMAIL} `, PASSWORD, "Make account");
-    expect(known.asked.signUps).toEqual([
+    await withPassword(` ${EMAIL} `, undefined, "Make account");
+    expect(asked.otp).toEqual([
       {
         email: EMAIL,
-        password: PASSWORD,
-        options: { emailRedirectTo: `${window.location.origin}/editor/` },
+        options: {
+          emailRedirectTo: `${window.location.origin}/editor/?then=password`,
+          shouldCreateUser: true,
+        },
       },
     ]);
-    const known_ = host.textContent;
-    expect(known_).toContain("Check your email to confirm");
+    // No password is ever sent to sign up with: one set before the address is confirmed is not kept.
+    expect(asked.signUps).toEqual([]);
+    expect(host.textContent).toContain("Check your email to confirm");
     expect(host.querySelector("[role=status] strong")?.textContent).toBe(EMAIL);
-    expect(known_).not.toContain(THEIRS);
-
-    act(() => root.unmount());
-    root = createRoot(host);
-    const fresh = fake();
-    await entry(new Account({ load: fresh.load }));
-    await click("Sign in");
-    await click("Make an account");
-    await withPassword(EMAIL, PASSWORD, "Make account");
-    // Word for word what an address already known got.
-    expect(host.textContent).toBe(known_);
+    expect(host.textContent).toContain("choose your password");
+    expect(host.textContent).not.toContain(THEIRS);
   });
 
-  it("maps the server's refusal of a password to the rule's words", async () => {
-    const weak = fake({ signUpError: authError("weak_password") });
-    await entry(new Account({ load: weak.load }));
+  it("says an email that could not be sent, and never that it was", async () => {
+    const limited = fake({
+      sendError: authError("over_email_send_rate_limit"),
+      resetError: authError("over_email_send_rate_limit"),
+    });
+    await entry(new Account({ load: limited.load }));
     await click("Sign in");
     await click("Make an account");
-    await withPassword(EMAIL, PASSWORD, "Make account");
-    expect(host.textContent).toContain(PASSWORD_RULE);
+    await withPassword(EMAIL, undefined, "Make account");
+    expect(host.querySelector("[role=alert]")?.textContent).toBe(TOO_MANY);
+    expect(host.textContent).not.toContain("Check your email");
+
+    await click("Forgot your password?");
+    await withPassword(EMAIL, undefined, "Email me a reset link");
+    expect(host.querySelector("[role=alert]")?.textContent).toBe(TOO_MANY);
+    expect(host.textContent).not.toContain("If there is an account");
     expect(host.textContent).not.toContain(THEIRS);
   });
 
@@ -607,18 +583,6 @@ describe("the email and password", () => {
     const reply = host.querySelector("[role=status]")?.textContent;
     expect(reply).toContain("If there is an account for");
     expect(reply).toContain(EMAIL);
-
-    // An address asked for again too soon, which only a known one can be, reads the same.
-    await click("Back to sign in");
-    await click("Forgot your password?");
-    act(() => root.unmount());
-    root = createRoot(host);
-    const again = fake({ resetError: authError("over_email_send_rate_limit") });
-    await entry(new Account({ load: again.load }));
-    await click("Sign in");
-    await click("Forgot your password?");
-    await withPassword(EMAIL, undefined, "Email me a reset link");
-    expect(host.querySelector("[role=status]")?.textContent).toBe(reply);
   });
 
   it("says a reset link could not be sent in the editor's words", async () => {
@@ -687,6 +651,138 @@ describe("the recovery state", () => {
     expect(asked.updates).toEqual([]);
     expect(host.textContent).not.toContain("Set a new password");
     expect(host.textContent).toContain(`Signed in as ${EMAIL}`);
+  });
+
+  it("maps the server's refusal of a password, and of an old session, to the editor's words", async () => {
+    await openReset({ updateError: authError("weak_password") });
+    await typeInto(field("New password"), "a-new-invented-1");
+    await click("Save password");
+    expect(host.textContent).toContain(PASSWORD_RULE);
+
+    act(() => root.unmount());
+    root = createRoot(host);
+    await openReset({ updateError: authError("reauthentication_needed") });
+    await typeInto(field("New password"), "a-new-invented-1");
+    await click("Save password");
+    expect(host.textContent).toContain(SIGNED_IN_TOO_LONG_AGO);
+    expect(host.textContent).not.toContain(THEIRS);
+  });
+
+  /** Load the page again in this browser, with the session still stored and nothing in the address. */
+  const reload = async (options: Parameters<typeof fake>[0] = {}) => {
+    act(() => root.unmount());
+    root = createRoot(host);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(session()));
+    window.history.replaceState(null, "", "/");
+    const made = fake({ session: session(), ...options });
+    await entry(new Account({ load: made.load }));
+    return made;
+  };
+
+  it("comes back after a reload until the new password is set, and not after", async () => {
+    await openReset();
+    expect(host.textContent).toContain("Set a new password");
+    const { asked } = await reload();
+    expect(host.textContent).toContain("Set a new password");
+    expect(button("Change password")).toBeUndefined();
+    await typeInto(field("New password"), "a-new-invented-1");
+    await click("Save password");
+    expect(asked.updates).toEqual([{ password: "a-new-invented-1" }]);
+    await reload();
+    expect(host.textContent).not.toContain("Set a new password");
+    expect(button("Change password")).toBeDefined();
+  });
+
+  it("comes back after a reload until it is left for now, and only for the same account", async () => {
+    await openReset();
+    await reload();
+    expect(host.textContent).toContain("Set a new password");
+    await click("Not now");
+    await reload();
+    expect(host.textContent).not.toContain("Set a new password");
+
+    // Kept for one account, it does not open for another signed in on this browser.
+    await openReset();
+    await reload({ session: session("another@example.test") });
+    expect(host.textContent).not.toContain("Set a new password");
+  });
+
+  it("is forgotten on signing out", async () => {
+    await openReset();
+    await click("Sign out");
+    expect(localStorage.getItem(RECOVERING_KEY)).toBeNull();
+  });
+});
+
+describe("choosing the first password, after making an account", () => {
+  const openMade = async (options: Parameters<typeof fake>[0] = {}) => {
+    localStorage.setItem(verifierKeyOf(FLOW), JSON.stringify("invented-verifier"));
+    window.history.replaceState(null, "", `/?code=invented-code&sb_flow_id=${FLOW}&then=password`);
+    const made = fake(options);
+    await entry(new Account({ load: made.load }));
+    return made;
+  };
+
+  it("opens from the link, states the rule, refuses one that breaks it unsent, and saves one", async () => {
+    const { asked } = await openMade();
+    expect(asked.exchanged).toEqual(["invented-code"]);
+    expect(window.location.search).toBe("");
+    expect(host.textContent).toContain("Choose your password");
+    expect(host.textContent).toContain(PASSWORD_HINT);
+    const input = field("Password");
+    expect(input.getAttribute("autocomplete")).toBe("new-password");
+    const hint = document.getElementById(input.getAttribute("aria-describedby") ?? "");
+    expect(hint?.textContent).toBe(PASSWORD_HINT);
+
+    await typeInto(field("Password"), "seven77");
+    await click("Save password");
+    expect(host.textContent).toContain(PASSWORD_RULE);
+    // 37 characters, but 73 bytes: too long for bcrypt, so refused.
+    await typeInto(field("Password"), TOO_LONG);
+    await click("Save password");
+    expect(host.textContent).toContain(PASSWORD_RULE);
+    await typeInto(field("Password"), "");
+    await click("Save password");
+    expect(host.textContent).toContain(TYPE_PASSWORD);
+    expect(asked.updates).toEqual([]);
+
+    // 72 bytes is the most, and 8 characters the fewest, however many bytes they take.
+    await typeInto(field("Password"), "é".repeat(36));
+    await click("Save password");
+    expect(asked.updates).toEqual([{ password: "é".repeat(36) }]);
+    expect(host.textContent).not.toContain("Choose your password");
+    expect(host.textContent).toContain(`Signed in as ${EMAIL}`);
+  });
+
+  it("takes 8 characters however many bytes they take, and comes back after a reload", async () => {
+    await openMade();
+    act(() => root.unmount());
+    root = createRoot(host);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(session()));
+    window.history.replaceState(null, "", "/");
+    const again = fake({ session: session() });
+    await entry(new Account({ load: again.load }));
+    expect(host.textContent).toContain("Choose your password");
+    await typeInto(field("Password"), "ééééàààà");
+    await click("Save password");
+    expect(again.asked.updates).toEqual([{ password: "ééééàààà" }]);
+  });
+
+  it("asks for no password after an ordinary email link", async () => {
+    localStorage.setItem(verifierKeyOf(FLOW), JSON.stringify("invented-verifier"));
+    window.history.replaceState(null, "", `/?code=invented-code&sb_flow_id=${FLOW}`);
+    const { load } = fake();
+    await entry(new Account({ load }));
+    expect(host.textContent).toContain(`Signed in as ${EMAIL}`);
+    expect(host.textContent).not.toContain("Choose your password");
+  });
+
+  it("asks for no password when the link could not sign in", async () => {
+    const { asked } = await openMade({ exchangeError: authError("otp_expired") });
+    expect(asked.exchanged).toEqual(["invented-code"]);
+    expect(host.textContent).toContain(LINK_EXPIRED);
+    expect(host.textContent).not.toContain("Choose your password");
+    expect(window.location.search).toBe("");
   });
 });
 

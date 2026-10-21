@@ -1,7 +1,8 @@
 /**
- * Setting a new password (milestone 4 item 5, decision 0094), in two places: the recovery state,
- * which a reset link opens signed in, where the person sets a new password or leaves it for now;
- * and changing the password while signed in, which asks for the current one first. Both state the
+ * Setting a new password (milestone 4 item 5, decisions 0094 and 0099), in two places: the recovery
+ * state, which a reset link opens signed in, where the person sets a new password or leaves it for
+ * now, and which the link of "Make an account" opens to choose the account's first password; and
+ * changing the password while signed in, which asks for the current one first. Both state the
  * rule before the person submits, and refuse a password that breaks it before any request.
  */
 import { type FormEvent, useState } from "react";
@@ -15,13 +16,19 @@ export const PASSWORD_SET = "Your new password is set.";
 /** Where a new-password form is: being typed and maybe sent, with what went wrong. */
 type Step = { sending: boolean; message?: string };
 
-/** The recovery state: a reset link signed the person in, to set a new password. */
+/**
+ * The recovery state: a reset link signed the person in, to set a new password, or the link of
+ * "Make an account" did, to choose the first one.
+ */
 export function RecoveryPanel({
   email,
+  first,
   onSet,
   onLater,
 }: {
   email: string;
+  /** Choosing the account's first password, after "Make an account", rather than a new one. */
+  first: boolean;
   /** Set the new password; resolves to what went wrong, or none. */
   onSet(password: string): Promise<string | undefined>;
   /** Leave without a new password, signed in. */
@@ -42,13 +49,21 @@ export function RecoveryPanel({
 
   return (
     <section aria-labelledby="recovery-title" style={{ maxWidth: "28rem" }}>
-      <h2 id="recovery-title">Set a new password</h2>
-      <p>
-        The link signed you in as <strong>{email}</strong>. Choose a new password for this account.
-      </p>
+      <h2 id="recovery-title">{first ? "Choose your password" : "Set a new password"}</h2>
+      {first ? (
+        <p>
+          The link signed you in as <strong>{email}</strong>. Choose a password to sign in with next
+          time. Without one, you can still sign in by email link.
+        </p>
+      ) : (
+        <p>
+          The link signed you in as <strong>{email}</strong>. Choose a new password for this
+          account.
+        </p>
+      )}
       <form noValidate onSubmit={(event) => void send(event)}>
         <PasswordField
-          label="New password"
+          label={first ? "Password" : "New password"}
           value={password}
           onChange={setPassword}
           disabled={step.sending}

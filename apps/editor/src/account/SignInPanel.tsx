@@ -1,13 +1,13 @@
 /**
  * Sign-in (milestone 4 items 4 and 5, decision 0094): a panel with the two ways in. The first is a
  * link sent by email: the person types an email and asks for the link, and the panel says to check
- * that address. The second is an email and a password, beside it: signing in, making an account,
- * which emails a link to confirm the address, and "Forgot your password?", which emails a link to
- * set a new one. A link that came back and could not sign in says why above the ways in.
+ * that address. The second is an email and a password, beside it: signing in; making an account,
+ * which emails a link to confirm the address, after which the person chooses a password (decision
+ * 0099); and "Forgot your password?", which emails a link to set a new one. A link that came back
+ * and could not sign in says why above the ways in.
  */
 import { type FormEvent, useId, useState } from "react";
-import { BAD_ADDRESS, PASSWORD_HINT, PASSWORD_RULE } from "./messages";
-import { keepsRule } from "./password";
+import { BAD_ADDRESS, PASSWORD_HINT } from "./messages";
 
 /** What the panel asks for before the address is sent. */
 export const EMAIL_LINK_NOTE =
@@ -15,6 +15,10 @@ export const EMAIL_LINK_NOTE =
 
 /** What the person reads when the address is left empty. */
 export const TYPE_EMAIL = "Type your email address.";
+
+/** What "Make an account" says before the address is sent: the password comes after the link. */
+export const MAKE_ACCOUNT_NOTE =
+  "We email you a link to confirm the address. Open it in this browser, and choose your password there.";
 
 /** What the person reads when the password is left empty. */
 export const TYPE_PASSWORD = "Type your password.";
@@ -36,8 +40,11 @@ export interface SignInPanelProps {
   onSendLink(email: string): Promise<string | undefined>;
   /** Sign in with an email and a password; resolves to what went wrong, or none. */
   onSignIn(email: string, password: string): Promise<string | undefined>;
-  /** Make an account, which emails a link to confirm it; resolves to what went wrong, or none. */
-  onSignUp(email: string, password: string): Promise<string | undefined>;
+  /**
+   * Make an account, which emails a link to confirm the address, and then asks for a password;
+   * resolves to what went wrong, or none.
+   */
+  onSignUp(email: string): Promise<string | undefined>;
   /** Email a link to set a new password; resolves to what went wrong, or none. */
   onSendReset(email: string): Promise<string | undefined>;
   /** Close the panel. */
@@ -197,15 +204,13 @@ function WithPassword({
     const say = (message: string) => setStep({ step: "form", sending: false, message });
     const wrong = addressProblem(address);
     if (wrong !== undefined) return say(wrong);
-    if (mode !== "reset" && password === "") return say(TYPE_PASSWORD);
-    // A new password that breaks the rule is refused here, before anything is sent.
-    if (mode === "signUp" && !keepsRule(password)) return say(PASSWORD_RULE);
+    if (mode === "signIn" && password === "") return say(TYPE_PASSWORD);
     setStep({ step: "form", sending: true });
     const problem =
       mode === "signIn"
         ? await onSignIn(address, password)
         : mode === "signUp"
-          ? await onSignUp(address, password)
+          ? await onSignUp(address)
           : await onSendReset(address);
     if (problem !== undefined) return say(problem);
     // Signed in, the panel closes; the others say what was sent.
@@ -221,9 +226,8 @@ function WithPassword({
           <>
             <h3>Check your email to confirm</h3>
             <p>
-              We sent a link to <strong>{step.email}</strong> to confirm the address. Open it in
-              this browser to sign in. If you already have an account, sign in with your password,
-              or reset it.
+              We sent a link to <strong>{step.email}</strong>. Open it in this browser to sign in
+              and choose your password.
             </p>
           </>
         ) : (
@@ -255,6 +259,7 @@ function WithPassword({
     <form noValidate onSubmit={(event) => void send(event)}>
       <h3>{title}</h3>
       {mode === "reset" && <p>We email you a link to set a new password.</p>}
+      {mode === "signUp" && <p>{MAKE_ACCOUNT_NOTE}</p>}
       <p>
         <label>
           Email{" "}
@@ -268,13 +273,13 @@ function WithPassword({
           />
         </label>
       </p>
-      {mode !== "reset" && (
+      {mode === "signIn" && (
         <PasswordField
           label="Password"
           value={password}
           onChange={setPassword}
           disabled={sending}
-          fresh={mode === "signUp"}
+          fresh={false}
         />
       )}
       <button type="submit" disabled={sending}>

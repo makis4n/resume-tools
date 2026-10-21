@@ -1,7 +1,8 @@
 /**
  * The account's entry in the editor's header (milestone 4 items 4 and 5): "Sign in", which opens
  * the sign-in panel, or, signed in, the account's email, "Change password" and "Sign out". A reset
- * link opens the recovery state, where the person sets a new password. It shows only when the
+ * link opens the recovery state, where the person sets a new password, and the link of "Make an
+ * account" opens it to choose the first one (decision 0099). It shows only when the
  * editor has accounts (`accountsConfigured`); item 9 dresses the account's state further.
  */
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -90,6 +91,7 @@ export function AccountEntry({ account }: { account: Account }) {
       {state.status === "recovering" && (
         <RecoveryPanel
           email={state.email ?? ""}
+          first={state.first === true}
           onSet={async (password) => {
             const failed = await account.setPassword(password);
             if (failed === undefined) setSaid(PASSWORD_SET);
@@ -111,7 +113,7 @@ export function AccountEntry({ account }: { account: Account }) {
           {...(state.notice === undefined ? {} : { notice: state.notice })}
           onSendLink={(email) => account.sendLink(email)}
           onSignIn={(email, password) => account.signIn(email, password)}
-          onSignUp={(email, password) => account.signUp(email, password)}
+          onSignUp={(email) => account.signUp(email)}
           onSendReset={(email) => account.sendReset(email)}
           onClose={() => {
             setOpened(false);

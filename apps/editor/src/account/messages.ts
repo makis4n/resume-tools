@@ -25,8 +25,12 @@ export const LINK_FAILED = "That link could not sign you in. Send a new one.";
 /** The account cannot sign in at all. */
 export const ACCOUNT_BLOCKED = "This account cannot sign in.";
 
-/** Too many links asked for in a short time. */
-export const TOO_MANY = "Too many sign-in emails were asked for. Wait a minute, then try again.";
+/**
+ * An email that could not be sent for now: too many asked for in a short time, by this address or
+ * by everyone. Never read as sent (decision 0099).
+ */
+export const TOO_MANY =
+  "Too many emails were asked for in a short time, so none was sent. Wait a minute, then try again.";
 
 /** The address was refused as it is written. */
 export const BAD_ADDRESS = "That email address does not look right. Check it and try again.";
@@ -83,6 +87,13 @@ export const WRONG_CURRENT = "That is not your current password. Your password h
 
 /** The new password is the one the account has already. */
 export const SAME_PASSWORD = "That is already your password. Choose a different one.";
+
+/**
+ * The session is more than a day old, and Auth asks for an emailed code before setting a password
+ * from it (`secure_password_change`, decision 0099); a new link makes a new session.
+ */
+export const SIGNED_IN_TOO_LONG_AGO =
+  "You signed in too long ago to set a password this way. Choose “Not now”, then “Change password”, and ask for a link to set one.";
 
 /** The session ended before the password could be set. */
 export const SESSION_ENDED =
@@ -160,17 +171,15 @@ export function messageFor(error: unknown, moment: Moment): string {
       }
     case "signOut":
       return NOT_SIGNED_OUT;
+    // Making an account sends only the address (decision 0099), so a failed validation is it.
     case "signUp":
       switch (code) {
-        case "weak_password":
-          return PASSWORD_RULE;
-        // The server's `validation_failed` is the address or a password over 72 characters; the
-        // editor refuses one over 72 bytes before sending, which is never fewer, so it is the address.
         case "email_address_invalid":
         case "validation_failed":
           return BAD_ADDRESS;
         case "email_address_not_authorized":
         case "email_provider_disabled":
+        case "otp_disabled":
         case "signup_disabled":
           return EMAIL_OFF;
         default:
@@ -208,6 +217,8 @@ export function messageFor(error: unknown, moment: Moment): string {
           return PASSWORD_RULE;
         case "same_password":
           return SAME_PASSWORD;
+        case "reauthentication_needed":
+          return SIGNED_IN_TOO_LONG_AGO;
         case "session_missing":
         case "session_not_found":
         case "session_expired":

@@ -10,12 +10,21 @@ import { flowIdOf } from "./client";
 
 /**
  * What a sign-in link brought back: the code to exchange, with the flow id of the request it
- * answers when the link carries one, or the code of what went wrong.
+ * answers when the link carries one, and whether the person asked to choose a password once signed
+ * in (making an account); or the code of what went wrong.
  */
-export type Callback = { code: string; flowId?: string } | { error: string };
+export type Callback = { code: string; flowId?: string; choosePassword?: true } | { error: string };
+
+/**
+ * The parameter, and its value, that "Make an account" adds to the address its link leads back to,
+ * so that the editor asks for a password once the link has signed the person in (decision 0099).
+ * It grants nothing: only a code this browser asked for signs in, and the person can leave it.
+ */
+export const THEN = "then";
+export const CHOOSE_PASSWORD = "password";
 
 /** The parameters a sign-in callback adds, which are taken out of the address once read. */
-const PARAMS = ["code", "sb_flow_id", "error", "error_code", "error_description"] as const;
+const PARAMS = ["code", "sb_flow_id", "error", "error_code", "error_description", THEN] as const;
 
 /** The parameters of a fragment such as `#error=access_denied&error_code=otp_expired`. */
 function fragment(url: URL): URLSearchParams {
@@ -35,7 +44,11 @@ export function callbackOf(href: string): Callback | undefined {
   const code = url.searchParams.get("code");
   if (!code) return undefined;
   const flowId = flowIdOf(url.searchParams.get("sb_flow_id"));
-  return flowId === undefined ? { code } : { code, flowId };
+  return {
+    code,
+    ...(flowId === undefined ? {} : { flowId }),
+    ...(url.searchParams.get(THEN) === CHOOSE_PASSWORD ? { choosePassword: true as const } : {}),
+  };
 }
 
 /** `href` with the callback's parameters taken out, and the fragment if it held only those. */

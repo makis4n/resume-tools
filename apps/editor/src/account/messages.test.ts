@@ -18,6 +18,7 @@ import {
   SAME_PASSWORD,
   SESSION_ENDED,
   SIGN_IN_FAILED,
+  SIGNED_IN_TOO_LONG_AGO,
   TOO_MANY,
   TOO_MANY_TRIES,
   UNREACHABLE,
@@ -71,12 +72,14 @@ describe("messageFor", () => {
   });
 
   it("chooses the editor's words for signing up", () => {
-    expect(messageFor(error("weak_password"), "signUp")).toBe(PASSWORD_RULE);
     expect(messageFor(error("validation_failed"), "signUp")).toBe(BAD_ADDRESS);
     expect(messageFor(error("email_address_invalid"), "signUp")).toBe(BAD_ADDRESS);
     expect(messageFor(error("signup_disabled"), "signUp")).toBe(EMAIL_OFF);
     expect(messageFor(error("email_provider_disabled"), "signUp")).toBe(EMAIL_OFF);
+    expect(messageFor(error("otp_disabled"), "signUp")).toBe(EMAIL_OFF);
     expect(messageFor(error("over_request_rate_limit"), "signUp")).toBe(TOO_MANY);
+    // An email Auth could not send is said, never read as sent (decision 0099).
+    expect(messageFor(error("over_email_send_rate_limit"), "signUp")).toBe(TOO_MANY);
     expect(messageFor(error("unexpected_failure"), "signUp")).toBe(NOT_MADE);
   });
 
@@ -94,6 +97,7 @@ describe("messageFor", () => {
     expect(messageFor(error("validation_failed"), "reset")).toBe(BAD_ADDRESS);
     expect(messageFor(error("email_provider_disabled"), "reset")).toBe(EMAIL_OFF);
     expect(messageFor(error("over_request_rate_limit"), "reset")).toBe(TOO_MANY);
+    expect(messageFor(error("over_email_send_rate_limit"), "reset")).toBe(TOO_MANY);
     expect(messageFor(error("unexpected_failure"), "reset")).toBe(NOT_SENT);
   });
 
@@ -102,6 +106,8 @@ describe("messageFor", () => {
     // The server's own "too long", over 72 characters.
     expect(messageFor(error("validation_failed"), "password")).toBe(PASSWORD_RULE);
     expect(messageFor(error("same_password"), "password")).toBe(SAME_PASSWORD);
+    // A session over a day old, which `secure_password_change` asks a code of (decision 0099).
+    expect(messageFor(error("reauthentication_needed"), "password")).toBe(SIGNED_IN_TOO_LONG_AGO);
     expect(messageFor(error("session_not_found"), "password")).toBe(SESSION_ENDED);
     expect(messageFor(error(undefined, "AuthSessionMissingError"), "password")).toBe(SESSION_ENDED);
     expect(messageFor(error("over_request_rate_limit"), "password")).toBe(TOO_MANY_TRIES);

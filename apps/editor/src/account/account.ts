@@ -10,13 +10,13 @@
  * request; one opened in another browser has no verifier for it, whatever others it keeps, and says
  * so. Every message is the editor's own (`messageFor`), never Supabase's text.
  *
- * Item 5 adds the email and password: signing up, which emails a link to confirm the address that
- * comes back through the same callback; signing in; a reset link, which comes back the same way but
- * opens the recovery state, where the person sets a new password; and changing the password while
- * signed in, after checking the current one.
+ * Item 5 adds the email and password: making an account, which emails a link to confirm the address
+ * that comes back through the same callback and then asks for a password (decision 0099); signing
+ * in; a reset link, which comes back the same way but opens the recovery state, where the person
+ * sets a new password; and changing the password while signed in, after checking the current one.
  */
 import type { AuthChangeEvent, Session, SupabaseClient } from "@supabase/supabase-js";
-import { type Callback, callbackOf, withoutCallback } from "./callback";
+import { type Callback, CHOOSE_PASSWORD, callbackOf, THEN, withoutCallback } from "./callback";
 import {
   accountsConfig,
   browserStorage,
@@ -26,6 +26,7 @@ import {
   hasStoredVerifier,
   loadClient,
   type SessionStorage,
+  STORAGE_KEY,
 } from "./client";
 import {
   ANOTHER_BROWSER,
@@ -47,11 +48,14 @@ type LinkBack = Exclude<Callback, { error: string }>;
 export interface AccountState {
   /**
    * Signed out; being checked, while a stored session or a link is read; signed in; or recovering,
-   * signed in by a reset link and asked to set a new password.
+   * signed in by a reset link and asked to set a new password, or by the link of "Make an account"
+   * and asked to choose one.
    */
   status: "signed-out" | "checking" | "signed-in" | "recovering";
   /** The signed-in account's email. */
   email?: string;
+  /** Recovering after "Make an account", choosing a password, rather than after a reset. */
+  first?: true;
   /** What a sign-in link that came back could not do, in the editor's words, until dismissed. */
   notice?: string;
 }
@@ -90,6 +94,32 @@ function stateOf(session: Session | null): AccountState {
     : { status: "signed-in", email: session.user.email ?? "" };
 }
 
+/** The recovery state for `email`: after a reset, or choosing a first password. */
+function recovering(email: string, first: boolean): AccountState {
+  return { status: "recovering", email, ...(first ? { first: true as const } : {}) };
+}
+
+/**
+ * Where the recovery state is kept in this browser's storage, so that a reload before the new
+ * password is set comes back to it rather than to a plain sign-in: the account's email, and whether
+ * it is a first password. It grants nothing; it only says which panel to show the same session.
+ */
+export const RECOVERING_KEY = `${STORAGE_KEY}-recovering`;
+
+/** The recovery state kept in `storage`, or none. */
+function keptRecovery(
+  storage: SessionStorage | undefined,
+): { email: string; first: boolean } | undefined {
+  try {
+    const kept: unknown = JSON.parse(storage?.getItem(RECOVERING_KEY) ?? "null");
+    if (typeof kept !== "object" || kept === null) return undefined;
+    const { email, first } = kept as { email?: unknown; first?: unknown };
+    return typeof email === "string" && email !== "" ? { email, first: first === true } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export class Account {
   readonly #load: ClientLoader;
   readonly #storage: SessionStorage | undefined;
@@ -115,11 +145,43 @@ export class Account {
   };
 
   #set(next: AccountState): void {
+    this.#keep(next);
     const now = this.#state;
-    if (now.status === next.status && now.email === next.email && now.notice === next.notice)
+    if (
+      now.status === next.status &&
+      now.email === next.email &&
+      now.notice === next.notice &&
+      now.first === next.first
+    )
       return;
     this.#state = next;
     for (const listener of this.#listeners) listener();
+  }
+
+  /**
+   * Keep the recovery state in this browser's storage while it lasts, and forget it once the person
+   * is signed in without it or signed out; while the account is being checked, it stays as it is.
+   */
+  #keep(next: AccountState): void {
+    try {
+      if (next.status === "recovering")
+        this.#storage?.setItem(
+          RECOVERING_KEY,
+          JSON.stringify({ email: next.email ?? "", first: next.first === true }),
+        );
+      else if (next.status !== "checking") this.#storage?.removeItem(RECOVERING_KEY);
+    } catch {
+      // A storage that refuses it leaves the state in memory, which holds until a reload.
+    }
+  }
+
+  /** The recovery state for the session of `email`, kept in memory or, across a reload, stored. */
+  #recoveringAs(email: string): AccountState | undefined {
+    const { status, first } = this.#state;
+    if (status === "recovering" && this.#state.email === email)
+      return recovering(email, first === true);
+    const kept = keptRecovery(this.#storage);
+    return kept?.email === email ? recovering(email, kept.first) : undefined;
   }
 
   /**
@@ -149,14 +211,16 @@ export class Account {
   /**
    * The state an event of the client's leads to. A reset link's exchange tells `PASSWORD_RECOVERY`,
    * which opens the recovery state; that state stays while the session is the same person's, as
-   * the client refreshes it or tells of it again, until a new password is set or the person leaves.
+   * the client refreshes it or tells of it again, and across a reload, until a new password is set
+   * or the person leaves it or signs out.
    */
   #after(event: AuthChangeEvent, session: Session | null): AccountState {
-    const recovering =
-      session !== null &&
-      (event === "PASSWORD_RECOVERY" ||
-        (this.#state.status === "recovering" && this.#state.email === (session.user.email ?? "")));
-    if (recovering) return { status: "recovering", email: session.user.email ?? "" };
+    if (session !== null) {
+      const email = session.user.email ?? "";
+      if (event === "PASSWORD_RECOVERY") return recovering(email, false);
+      const kept = this.#recoveringAs(email);
+      if (kept !== undefined) return kept;
+    }
     return { ...stateOf(session), ...this.#keptNotice(session) };
   }
 
@@ -197,7 +261,7 @@ export class Account {
     this.#set({ status: "checking", ...(notice === undefined ? {} : { notice }) });
     let said = notice;
     let session: Session | null = null;
-    let recovery = false;
+    let choose = false;
     try {
       const client = await this.client();
       // The stored session, read and refreshed if it needs to be.
@@ -215,8 +279,9 @@ export class Account {
           said = messageFor(error, "link");
         }
         // A reset link's request kept its verifier marked as one, and its exchange tells
-        // `PASSWORD_RECOVERY` rather than `SIGNED_IN`, which the listener has made the state.
-        recovery = !error && this.#state.status === "recovering";
+        // `PASSWORD_RECOVERY` rather than `SIGNED_IN`, which the listener has made the state. The
+        // link of "Make an account" says so in its address, and asks for a password once in.
+        choose = !error && link.choosePassword === true;
       }
       session = (await client.auth.getSession()).data.session;
     } catch (error) {
@@ -226,8 +291,11 @@ export class Account {
       if (link !== undefined) this.#place.replace(withoutCallback(this.#place.href()));
     }
     const state = stateOf(session);
-    if (recovery && state.status === "signed-in")
-      return this.#set({ status: "recovering", email: state.email ?? "" });
+    if (state.status === "signed-in") {
+      const email = state.email ?? "";
+      const kept = choose ? recovering(email, true) : this.#recoveringAs(email);
+      if (kept !== undefined) return this.#set(kept);
+    }
     this.#set(
       state.status === "signed-out" && said !== undefined ? { ...state, notice: said } : state,
     );
@@ -289,25 +357,23 @@ export class Account {
   }
 
   /**
-   * Make an account with `email` and `password`: Supabase emails a link to confirm the address,
-   * which leads back here and signs in, in this browser. The reply is the same whether or not the
-   * address has an account already, so the editor never says which: Supabase answers an address
-   * with a confirmed account with `user_already_exists`, and one asked for again too soon with
-   * `over_email_send_rate_limit`, which only an address it knows can get; both read as sent, as an
-   * email to that address was sent before or is not needed. Returns what went wrong, or none.
+   * Make an account with `email` (decision 0099): Supabase emails a link that confirms the address,
+   * or signs in to the account it has already, which leads back here, in this browser, signed in and
+   * asked to choose a password. No password goes now: Auth would keep one set before the address
+   * is confirmed, whoever set it, so the database drops it at confirmation, and the password is
+   * chosen once the link proves the address. The reply is the same whether or not the address has
+   * an account. Returns what went wrong, or none; an email that could not be sent, even for being
+   * asked again too soon, is said, never read as sent.
    */
-  async signUp(email: string, password: string): Promise<string | undefined> {
-    if (!keepsRule(password)) return PASSWORD_RULE;
-    const problem = await this.#ask("signUp", "The account was not made", async (client) => {
-      const { error } = await client.auth.signUp({
+  async signUp(email: string): Promise<string | undefined> {
+    const back = new URL(redirectOf(this.#place.href()));
+    back.searchParams.set(THEN, CHOOSE_PASSWORD);
+    const problem = await this.#ask("signUp", "The account was not made", (client) =>
+      client.auth.signInWithOtp({
         email,
-        password,
-        options: { emailRedirectTo: redirectOf(this.#place.href()) },
-      });
-      const code = codeOf(error);
-      const known = code === "user_already_exists" || code === "email_exists";
-      return { error: known || code === "over_email_send_rate_limit" ? null : error };
-    });
+        options: { emailRedirectTo: back.toString(), shouldCreateUser: true },
+      }),
+    );
     if (problem === undefined) this.dismiss();
     return problem;
   }
@@ -331,17 +397,14 @@ export class Account {
 
   /**
    * Email a link to set a new password for `email`, which leads back here in the recovery state.
-   * Supabase answers the same whether or not the address has an account, except when an address it
-   * knows asks again too soon (`over_email_send_rate_limit`), which reads as sent here, since a link
-   * was sent a moment ago. Returns what went wrong, or none.
+   * Supabase answers the same whether or not the address has an account. An email it could not
+   * send (`over_email_send_rate_limit`: too many for the project, or this address asked again too
+   * soon) is said as such, never read as sent (decision 0099). Returns what went wrong, or none.
    */
   async sendReset(email: string): Promise<string | undefined> {
-    return this.#ask("reset", "The reset link was not sent", async (client) => {
-      const { error } = await client.auth.resetPasswordForEmail(email, {
-        redirectTo: redirectOf(this.#place.href()),
-      });
-      return { error: codeOf(error) === "over_email_send_rate_limit" ? null : error };
-    });
+    return this.#ask("reset", "The reset link was not sent", (client) =>
+      client.auth.resetPasswordForEmail(email, { redirectTo: redirectOf(this.#place.href()) }),
+    );
   }
 
   /**
@@ -359,14 +422,17 @@ export class Account {
 
   /** Leave the recovery state without a new password, signed in as the reset link left it. */
   endRecovery(): void {
-    if (this.#state.status === "recovering") this.#set({ ...this.#state, status: "signed-in" });
+    const { status, email } = this.#state;
+    if (status === "recovering") this.#set({ status: "signed-in", email: email ?? "" });
   }
 
   /**
    * Change the signed-in account's password from `current` to `next`. The current one is checked
    * first by signing in with it: the local stack's Auth accepts `current_password` on `updateUser`
    * but ignores it unless its `security_update_password_require_current_password` is on, which the
-   * CLI's `config.toml` cannot set (CLI 2.121.0, Auth 2.197.0). A wrong one changes nothing.
+   * CLI's `config.toml` cannot set (CLI 2.121.0, Auth 2.197.0). A wrong one changes nothing. The
+   * server's own guard is `secure_password_change` (decision 0099): a session more than a day old
+   * cannot set a password without an emailed code, and the sign-in here makes a new one.
    * Returns what went wrong, or none.
    */
   async changePassword(current: string, next: string): Promise<string | undefined> {
