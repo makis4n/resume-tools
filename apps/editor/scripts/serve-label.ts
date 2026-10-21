@@ -7,16 +7,12 @@
  * The keys are read on the server side alone: `ANTHROPIC_API_KEY`, Claude's, asked first (decision
  * 0109), and `SOCLAAS_API_KEY` (decision 0036), asked behind it, from the editor's `.env` files and
  * environment by Vite's `loadEnv`, never under the `VITE_` prefix, which would put a key in the
- * page, and Claude's from the files alone, never the shell's; `PDF_LABEL_CLAUDE_MODEL` and
- * `PDF_LABEL_MODEL` pick the models. With no key the route
- * refuses with 503 and the page's rules read the PDF, and the dev server says so in one line when
- * it starts. The rate limit's buckets are kept in memory. Nothing the route is sent is kept or
- * logged.
+ * page, the shell's over the files'; `PDF_LABEL_CLAUDE_MODEL` and `PDF_LABEL_MODEL` pick the
+ * models. With no key the route refuses with 503 and the page's rules read the PDF, and the dev
+ * server says so in one line when it starts. The rate limit's buckets are kept in memory. Nothing
+ * the route is sent is kept or logged.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { parseEnv } from "node:util";
 import { loadEnv, type Plugin } from "vite";
 import {
   CLAUDE_KEY_VARIABLE,
@@ -34,29 +30,12 @@ import {
 import { MemoryRateStore, type RateStore } from "../src/service/rate.ts";
 import { type Incoming, send, toRequest } from "./serve-fetch.ts";
 
-/** The prefixes of the variables the route reads as Vite does, the shell's over the files'. */
-const PREFIXES = ["SOCLAAS_", "PDF_LABEL_"];
-
-/** The prefix of Claude's variables, which the route reads from the editor's `.env` files alone. */
-const FILE_ONLY = "ANTHROPIC_";
-
 /**
- * The variables of `prefix` in the editor's `.env` files, in the order Vite reads them (`.env`,
- * `.env.local`, `.env.<mode>`, `.env.<mode>.local`), a later file's over an earlier's, and never
- * the shell's: a Claude key exported for other tools would otherwise send every PDF the dev server
- * reads to Anthropic, and no line in `.env` could stop it, since Vite's `loadEnv` puts the shell's
- * over the files' (decision 0109).
+ * The prefixes of the variables the route reads: its keys', and its models'. Vite's `loadEnv` takes
+ * the shell's over the editor's `.env` files', so a key can be given for one run on the command
+ * line, and a key exported for other tools is taken too (decision 0109).
  */
-export function fileEnv(mode: string, envDir: string, prefix: string): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const name of [".env", ".env.local", `.env.${mode}`, `.env.${mode}.local`]) {
-    const path = join(envDir, name);
-    if (!existsSync(path)) continue;
-    for (const [key, value] of Object.entries(parseEnv(readFileSync(path, "utf8"))))
-      if (key.startsWith(prefix) && value !== undefined) env[key] = value;
-  }
-  return env;
-}
+const PREFIXES = ["SOCLAAS_", "ANTHROPIC_", "PDF_LABEL_"];
 
 /** What the dev server says when it has no key. */
 export const NO_MODEL = `The label route, ${LABEL_ROUTE}, has no model: set ${CLAUDE_KEY_VARIABLE} or ${KEY_VARIABLE} in apps/editor/.env for a PDF's lines to be read by the model; until then the rules read them.`;
@@ -83,11 +62,7 @@ export function serveLabel(options: ServeLabelOptions = {}): Plugin {
     apply: (_, env) => env.command === "serve" && env.mode !== "test",
     configureServer(server) {
       const { logger } = server.config;
-      const { mode, envDir } = server.config;
-      const env = options.env ?? {
-        ...loadEnv(mode, envDir, PREFIXES),
-        ...(envDir === false ? {} : fileEnv(mode, envDir, FILE_ONLY)),
-      };
+      const env = options.env ?? loadEnv(server.config.mode, server.config.envDir, PREFIXES);
       const { model, fallback } =
         options.model === undefined
           ? labelModels(env)

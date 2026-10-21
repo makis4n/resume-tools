@@ -28,9 +28,11 @@ gateway's model was (decision 0059).
   lowest setting.
 - **Anthropic's API is named in the code**, so `ANTHROPIC_BASE_URL` in the environment, which the
   provider would otherwise follow, never sends the lines or the key elsewhere.
-- **The dev server reads Claude's variables from the editor's `.env` files alone**, never the
-  shell's, so a Claude key exported for other tools does not turn Claude on, and an
-  `ANTHROPIC_API_KEY=` line turns it off. SoCLaaS's are read as before, the shell's over the files'.
+- **The dev server reads Claude's variables as it reads SoCLaaS's**: from the editor's `.env`
+  files or the shell, the shell's over the files' (Vite's `loadEnv`), so a key kept in the
+  keychain can be given for one run on the command line. The owner chose this over reading
+  Claude's from the files alone, knowing that a Claude key exported in a shell profile for other
+  tools turns Claude on in development too, and that a line in `.env` cannot turn it off.
 - **The provider is the AI SDK's** (`@ai-sdk/anthropic` 4.0.82, a new dependency of
   `packages/naming`), so the label route's one call (`askRoles`) stays the same for both models,
   and the schema goes to the Messages API as a structured output.

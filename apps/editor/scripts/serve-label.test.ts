@@ -1,14 +1,14 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MockLanguageModelV4 } from "ai/test";
 import { createServer, type Logger, type ViteDevServer } from "vite";
-import { afterAll, describe, expect, test, vi } from "vitest";
+import { afterAll, describe, expect, test } from "vitest";
 import type { Features } from "../src/pdf/roles";
 import { LABEL_SAYS } from "../src/service/label";
 import { LabelReply } from "../src/service/label-contract";
-import { fileEnv, NO_MODEL, type ServeLabelOptions, serveLabel } from "./serve-label";
+import { NO_MODEL, type ServeLabelOptions, serveLabel } from "./serve-label";
 
 // The lines here are invented, and no test calls a provider: the model is the AI SDK's mock.
 
@@ -120,27 +120,5 @@ describe("the label route on the dev server", () => {
   test("never reads the key from a VITE_ variable", async () => {
     const { lines } = await serve({ env: { VITE_SOCLAAS_API_KEY: "invented-key" } as never });
     expect(lines).toContain(NO_MODEL);
-  });
-});
-
-describe("Claude's variables on the dev server", () => {
-  test("come from the editor's .env files alone, a later file's over an earlier's", () => {
-    const dir = mkdtempSync(join(tmpdir(), "label-env-"));
-    made.push(dir);
-    vi.stubEnv("ANTHROPIC_API_KEY", "invented-shell-key");
-    vi.stubEnv("ANTHROPIC_BASE_URL", "https://gateway.invalid/v1");
-    try {
-      // No file names the key: the shell's is not taken.
-      expect(fileEnv("development", dir, "ANTHROPIC_")).toEqual({});
-      writeFileSync(join(dir, ".env"), "ANTHROPIC_API_KEY=invented-file-key\nSOCLAAS_API_KEY=x\n");
-      expect(fileEnv("development", dir, "ANTHROPIC_")).toEqual({
-        ANTHROPIC_API_KEY: "invented-file-key",
-      });
-      // An empty line in a later file turns it off, whatever the shell holds.
-      writeFileSync(join(dir, ".env.development.local"), "ANTHROPIC_API_KEY=\n");
-      expect(fileEnv("development", dir, "ANTHROPIC_")).toEqual({ ANTHROPIC_API_KEY: "" });
-    } finally {
-      vi.unstubAllEnvs();
-    }
   });
 });
