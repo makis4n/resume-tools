@@ -1,7 +1,7 @@
 # 0090. Originals live in Supabase Storage, private to their owner
 
 Date: 2026-10-21 · Status: accepted, approved with the plan by the owner on 21 October 2026; amends
-the plan's sections 8.1, 8.2 and 8.3 once the owner revises them
+the plan's sections 8.1, 8.2 and 8.3, which the owner revised on 21 October 2026
 
 ## Context
 
