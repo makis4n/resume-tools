@@ -2,7 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Account, type Place } from "./account";
 import { createAccountClient, hasStoredSession, type SessionStorage } from "./client";
-import { ANOTHER_BROWSER } from "./messages";
+import { ANOTHER_BROWSER, LINK_EXPIRED, LINK_SUPERSEDED, TOO_MANY } from "./messages";
 
 // Signing in by email link on the local Supabase stack (milestone 4 item 4, decisions 0094 and
 // 0096), with the editor's own client and account in Node: a browser is a client and an account on
@@ -37,7 +37,12 @@ const pause = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
 describe.skipIf(!url || !key || !mailpit)("signing in by email link on the local stack", () => {
   const config = { url: url ?? "", key: key ?? "" };
-  const email = `link.${Date.now()}.${Math.floor(Math.random() * 1e6)}@example.test`;
+  const invent = (name: string) =>
+    `${name}.${Date.now()}.${Math.floor(Math.random() * 1e6)}@example.test`;
+  const email = invent("link");
+  const otherAddress = invent("other");
+  const first = invent("first");
+  const second = invent("second");
   const clients: SupabaseClient[] = [];
 
   /** One browser: its storage, and a page loaded at `href` with a client of its own. */
@@ -50,26 +55,34 @@ describe.skipIf(!url || !key || !mailpit)("signing in by email link on the local
   }
 
   /** Mailpit's messages to the address, newest first. */
-  async function mail(): Promise<{ ID: string; Subject: string }[]> {
-    const query = encodeURIComponent(`to:"${email}"`);
+  async function mail(to = email): Promise<{ ID: string; Subject: string }[]> {
+    const query = encodeURIComponent(`to:"${to}"`);
     const found = await fetch(`${mailpit}/api/v1/search?query=${query}`);
     expect(found.ok).toBe(true);
     return ((await found.json()) as { messages: { ID: string; Subject: string }[] }).messages;
   }
 
-  const clear = async () => {
-    const query = encodeURIComponent(`to:"${email}"`);
+  const clearTo = async (to: string) => {
+    const query = encodeURIComponent(`to:"${to}"`);
     await fetch(`${mailpit}/api/v1/search?query=${query}`, { method: "DELETE" });
   };
+  const clear = async () => {
+    for (const to of [email, otherAddress, first, second]) await clearTo(to);
+  };
 
-  /** The link in the newest email with `subject`, waited for; the email is then deleted. */
-  async function linkIn(subject: string): Promise<string> {
+  /**
+   * The link in the newest email to `to` with `subject` (any subject when none is given), waited
+   * for; the address's emails are then deleted.
+   */
+  async function linkIn(subject: string | undefined, to = email): Promise<string> {
     for (let tries = 0; tries < 50; tries++) {
-      const message = (await mail()).find((each) => each.Subject === subject);
+      const message = (await mail(to)).find(
+        (each) => subject === undefined || each.Subject === subject,
+      );
       if (message !== undefined) {
         const read = await fetch(`${mailpit}/api/v1/message/${message.ID}`);
         const { HTML } = (await read.json()) as { HTML: string };
-        await clear();
+        await clearTo(to);
         const href = /href="([^"]*\/auth\/v1\/verify[^"]*)"/.exec(HTML)?.[1];
         if (href === undefined) throw new Error("the email holds no sign-in link");
         return href.replaceAll("&amp;", "&");
@@ -87,6 +100,8 @@ describe.skipIf(!url || !key || !mailpit)("signing in by email link on the local
     const location = response.headers.get("location") ?? "";
     expect(location.startsWith(EDITOR)).toBe(true);
     expect(new URL(location).searchParams.get("code")).toBeTruthy();
+    // The link names the request it answers, so its code meets that request's own verifier.
+    expect(new URL(location).searchParams.get("sb_flow_id")).toBeTruthy();
     return location;
   }
 
@@ -142,6 +157,87 @@ describe.skipIf(!url || !key || !mailpit)("signing in by email link on the local
     const page = await browser(storage, back);
     expect(await settled(page.account)).toEqual({ status: "signed-in", email });
     expect(await page.account.signOut()).toBeUndefined();
+    expect(hasStoredSession(storage)).toBe(false);
+  });
+
+  it("says another browser's link cannot sign in here, though this one asked for a link of its own", async () => {
+    // This browser asked for a link once and never opened it, so it keeps a verifier of its own.
+    const here = memory();
+    const unopened = await browser(here);
+    expect(await unopened.account.sendLink(otherAddress)).toBeUndefined();
+    await linkIn(undefined, otherAddress);
+
+    // A link asked for in another browser, opened here: it is not this browser's, and says so.
+    await pause(1100);
+    const asked = memory();
+    const asking = await browser(asked);
+    expect(await asking.account.sendLink(email)).toBeUndefined();
+    const back = await follow(await linkIn(undefined));
+    const opened = await browser(here, back);
+    expect(await settled(opened.account)).toEqual({
+      status: "signed-out",
+      notice: ANOTHER_BROWSER,
+    });
+    expect(hasStoredSession(here)).toBe(false);
+
+    // The browser that asked still signs in with it.
+    const page = await browser(asked, back);
+    expect(await settled(page.account)).toEqual({ status: "signed-in", email });
+    expect(await page.account.signOut()).toBeUndefined();
+  });
+
+  it("says a link replaced by a refused request is from an earlier one, not another browser's", async () => {
+    await pause(1100);
+    const storage = memory();
+    const asking = await browser(storage);
+    expect(await asking.account.sendLink(email)).toBeUndefined();
+    // Asked again at once, the second is refused; Supabase ties the address's next code to that
+    // later request all the same, so the first link cannot sign in, but it was asked for here.
+    expect(await asking.account.sendLink(email)).toBe(TOO_MANY);
+    const back = await follow(await linkIn(undefined));
+
+    const page = await browser(storage, back);
+    expect(await settled(page.account)).toEqual({ status: "signed-out", notice: LINK_SUPERSEDED });
+    expect(hasStoredSession(storage)).toBe(false);
+  });
+
+  it("signs in by the newer of two links to one address, after the earlier one says so", async () => {
+    await pause(1100);
+    const storage = memory();
+    const asking = await browser(storage);
+    expect(await asking.account.sendLink(email)).toBeUndefined();
+    const earlierLink = await linkIn(undefined);
+    await pause(1100);
+    expect(await asking.account.sendLink(email)).toBeUndefined();
+    const newerLink = await linkIn(undefined);
+
+    // Both emails opened after both were asked for: the newer request ended the earlier link,
+    // which comes back with an error, and trying it leaves the newer link's verifier here.
+    const response = await fetch(earlierLink, { redirect: "manual" });
+    const earlierBack = response.headers.get("location") ?? "";
+    expect(earlierBack.startsWith(EDITOR)).toBe(true);
+    const earlier = await browser(storage, earlierBack);
+    expect(await settled(earlier.account)).toEqual({ status: "signed-out", notice: LINK_EXPIRED });
+
+    const newer = await browser(storage, await follow(newerLink));
+    expect(await settled(newer.account)).toEqual({ status: "signed-in", email });
+    expect(await newer.account.signOut()).toBeUndefined();
+  });
+
+  it("signs in by an earlier link, and then by the newer one, both asked for here", async () => {
+    const storage = memory();
+    const asking = await browser(storage);
+    expect(await asking.account.sendLink(first)).toBeUndefined();
+    expect(await asking.account.sendLink(second)).toBeUndefined();
+    const firstBack = await follow(await linkIn(undefined, first));
+    const secondBack = await follow(await linkIn(undefined, second));
+
+    // The earlier link's code meets its own verifier, and leaves the newer link's.
+    const earlier = await browser(storage, firstBack);
+    expect(await settled(earlier.account)).toEqual({ status: "signed-in", email: first });
+    const newer = await browser(storage, secondBack);
+    expect(await settled(newer.account)).toEqual({ status: "signed-in", email: second });
+    expect(await newer.account.signOut()).toBeUndefined();
     expect(hasStoredSession(storage)).toBe(false);
   });
 });

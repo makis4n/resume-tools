@@ -8,13 +8,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App";
 import { AccountEntry } from "./AccountEntry";
 import { Account } from "./account";
-import { STORAGE_KEY, VERIFIER_KEY } from "./client";
+import { type SessionStorage, STORAGE_KEY, VERIFIER_KEY, verifierKeyOf } from "./client";
 import {
   ANOTHER_BROWSER,
   BAD_ADDRESS,
   LINK_EXPIRED,
   LINK_SUPERSEDED,
   NOT_SENT,
+  NOT_SIGNED_OUT,
   TOO_MANY,
 } from "./messages";
 import { TYPE_EMAIL } from "./SignInPanel";
@@ -52,11 +53,22 @@ const session = (email = EMAIL) =>
     user: { id: "00000000-0000-4000-8000-000000000001", email },
   }) as unknown as Session;
 
+/** Flow ids of two requests for a link, as the client makes them. */
+const FLOW = "0123456789abcdef0123456789abcdef";
+const OTHER_FLOW = "fedcba9876543210fedcba9876543210";
+
 const authError = (code: string) => ({ name: "AuthApiError", code, status: 400, message: THEIRS });
 
 /** A fake client: what it was asked, and what it answers. */
 function fake(
-  options: { session?: Session; sendError?: unknown; exchangeError?: unknown; email?: string } = {},
+  options: {
+    session?: Session;
+    sendError?: unknown;
+    exchangeError?: unknown;
+    email?: string;
+    /** Signing out fails as the real client's does when it cannot read the session first. */
+    signOutError?: unknown;
+  } = {},
 ) {
   let now: Session | null = options.session ?? null;
   let listener: ((event: string, session: Session | null) => void) | undefined;
@@ -64,6 +76,7 @@ function fake(
     loads: 0,
     otp: [] as { email: string; options?: { emailRedirectTo?: string } }[],
     exchanged: [] as string[],
+    exchangedWith: [] as unknown[],
     signOuts: [] as unknown[],
   };
   const auth = {
@@ -77,8 +90,9 @@ function fake(
       asked.otp.push(args);
       return { data: {}, error: options.sendError ?? null };
     },
-    exchangeCodeForSession: async (code: string) => {
+    exchangeCodeForSession: async (code: string, with_?: unknown) => {
       asked.exchanged.push(code);
+      asked.exchangedWith.push(with_);
       if (options.exchangeError !== undefined)
         return { data: { session: null, user: null }, error: options.exchangeError };
       now = session(options.email);
@@ -87,6 +101,14 @@ function fake(
     },
     signOut: async (args: unknown) => {
       asked.signOuts.push(args);
+      // As the real client: when it could not read the session (its access token ran out and the
+      // server cannot be reached), it says so and leaves the session where it is stored; it reads
+      // as none, all the same, since it cannot be refreshed.
+      if (options.signOutError !== undefined) {
+        now = null;
+        return { error: options.signOutError };
+      }
+      localStorage.removeItem(STORAGE_KEY);
       now = null;
       listener?.("SIGNED_OUT", null);
       return { error: null };
@@ -256,11 +278,13 @@ describe("the email link", () => {
 
 describe("coming back from a link", () => {
   it("signs in with the code, where this browser asked for it, and takes it out of the address", async () => {
-    localStorage.setItem(VERIFIER_KEY, JSON.stringify("invented-verifier"));
-    window.history.replaceState(null, "", "/?code=invented-code");
+    localStorage.setItem(verifierKeyOf(FLOW), JSON.stringify("invented-verifier"));
+    window.history.replaceState(null, "", `/?code=invented-code&sb_flow_id=${FLOW}`);
     const { asked, load } = fake();
     await entry(new Account({ load }));
     expect(asked.exchanged).toEqual(["invented-code"]);
+    // With that request's own verifier, not whichever link this browser asked for last.
+    expect(asked.exchangedWith).toEqual([{ flowId: FLOW }]);
     expect(host.textContent).toContain(`Signed in as ${EMAIL}`);
     expect(window.location.search).toBe("");
   });
@@ -277,6 +301,19 @@ describe("coming back from a link", () => {
     await sendTo(EMAIL);
     expect(host.textContent).toContain("Check your email");
     expect(host.textContent).not.toContain(ANOTHER_BROWSER);
+  });
+
+  it("says another browser's link cannot sign in here, though this browser asked for one of its own", async () => {
+    // This browser asked for a link once and kept its verifier; the link opened is another's.
+    localStorage.setItem(VERIFIER_KEY, JSON.stringify("invented-verifier"));
+    localStorage.setItem(verifierKeyOf(OTHER_FLOW), JSON.stringify("invented-verifier"));
+    window.history.replaceState(null, "", `/?code=invented-code&sb_flow_id=${FLOW}`);
+    const { asked, load } = fake();
+    await entry(new Account({ load }));
+    expect(host.textContent).toContain(ANOTHER_BROWSER);
+    expect(host.textContent).not.toContain(LINK_SUPERSEDED);
+    expect(asked.exchanged).toEqual([]);
+    expect(window.location.search).toBe("");
   });
 
   it("says a link that came back with an error has expired, never in Supabase's words", async () => {
@@ -319,5 +356,41 @@ describe("a stored session", () => {
     expect(asked.signOuts).toEqual([{ scope: "local" }]);
     expect(button("Sign in")).toBeDefined();
     expect(host.textContent).not.toContain(EMAIL);
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it("signs out of this browser when the server cannot be reached to refresh the session", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(session()));
+    const { load } = fake({
+      session: session(),
+      signOutError: { name: "AuthRetryableFetchError", status: 0, message: THEIRS },
+    });
+    await entry(new Account({ load }));
+    await click("Sign out");
+    // The session the client left is taken out here, so the next load does not sign in again.
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    expect(button("Sign in")).toBeDefined();
+    expect(host.textContent).not.toContain(EMAIL);
+    expect(host.textContent).not.toContain(THEIRS);
+  });
+
+  it("says signing out did not finish while the session is still stored here", async () => {
+    const kept = new Map([[STORAGE_KEY, JSON.stringify(session())]]);
+    const stubborn: SessionStorage = {
+      getItem: (key) => kept.get(key) ?? null,
+      setItem: (key, value) => void kept.set(key, value),
+      removeItem: () => {
+        throw new Error("blocked");
+      },
+    };
+    const { load } = fake({
+      session: session(),
+      signOutError: { name: "AuthRetryableFetchError", status: 0, message: THEIRS },
+    });
+    await entry(new Account({ load, storage: stubborn }));
+    await click("Sign out");
+    expect(host.textContent).toContain(NOT_SIGNED_OUT);
+    expect(host.textContent).toContain(`Signed in as ${EMAIL}`);
+    expect(host.textContent).not.toContain(THEIRS);
   });
 });

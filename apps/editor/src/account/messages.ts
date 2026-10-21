@@ -12,9 +12,12 @@ export const ANOTHER_BROWSER =
 export const LINK_EXPIRED =
   "That sign-in link has expired or has already been used. Send a new one.";
 
-/** A link from an earlier request, after a newer one was asked for in this browser. */
+/**
+ * A link from an earlier request, after a newer one was asked for in this browser, even one that
+ * was refused (too many at once), which no email answers.
+ */
 export const LINK_SUPERSEDED =
-  "That sign-in link is from an earlier request. Open the newest email, or send a new link.";
+  "That sign-in link was replaced by a later request. Open the newest email if one came, or send a new link.";
 
 /** Any other link that could not sign in. */
 export const LINK_FAILED = "That link could not sign you in. Send a new one.";

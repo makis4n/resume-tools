@@ -6,8 +6,13 @@
  * takes them all out of the address once read, so a reload does not read them again.
  */
 
-/** What a sign-in link brought back: the code to exchange, or the code of what went wrong. */
-export type Callback = { code: string } | { error: string };
+import { flowIdOf } from "./client";
+
+/**
+ * What a sign-in link brought back: the code to exchange, with the flow id of the request it
+ * answers when the link carries one, or the code of what went wrong.
+ */
+export type Callback = { code: string; flowId?: string } | { error: string };
 
 /** The parameters a sign-in callback adds, which are taken out of the address once read. */
 const PARAMS = ["code", "sb_flow_id", "error", "error_code", "error_description"] as const;
@@ -28,7 +33,9 @@ export function callbackOf(href: string): Callback | undefined {
     if (error) return { error };
   }
   const code = url.searchParams.get("code");
-  return code ? { code } : undefined;
+  if (!code) return undefined;
+  const flowId = flowIdOf(url.searchParams.get("sb_flow_id"));
+  return flowId === undefined ? { code } : { code, flowId };
 }
 
 /** `href` with the callback's parameters taken out, and the fragment if it held only those. */

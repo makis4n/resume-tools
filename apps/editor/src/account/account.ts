@@ -5,22 +5,27 @@
  * the person opens sign-in, when a session is stored, or when the address carries a sign-in link's
  * callback. A signed-out person with none of those never loads it, and sends Supabase nothing.
  *
- * A sign-in link comes back to the editor with a code, which is exchanged here for a session with
- * the PKCE verifier this browser kept when it asked; one opened in another browser has no verifier
- * and says so. Every message is the editor's own (`messageFor`), never Supabase's text.
+ * A sign-in link comes back to the editor with a code and the flow id of the request it answers,
+ * and the code is exchanged here for a session with the PKCE verifier this browser kept for that
+ * request; one opened in another browser has no verifier for it, whatever others it keeps, and says
+ * so. Every message is the editor's own (`messageFor`), never Supabase's text.
  */
 import type { AuthChangeEvent, Session, SupabaseClient } from "@supabase/supabase-js";
-import { callbackOf, withoutCallback } from "./callback";
+import { type Callback, callbackOf, withoutCallback } from "./callback";
 import {
   accountsConfig,
   browserStorage,
   type ClientLoader,
+  forgetStoredSession,
   hasStoredSession,
   hasStoredVerifier,
   loadClient,
   type SessionStorage,
 } from "./client";
 import { ANOTHER_BROWSER, codeOf, messageFor, NOT_SIGNED_OUT, UNREACHABLE } from "./messages";
+
+/** A sign-in link that came back with a code to exchange. */
+type LinkBack = Exclude<Callback, { error: string }>;
 
 /** Where the account stands, as the header shows it. */
 export interface AccountState {
@@ -138,24 +143,24 @@ export class Account {
     this.#started = true;
     const href = this.#place.href();
     const callback = callbackOf(href);
-    let code: string | undefined;
+    let link: LinkBack | undefined;
     let notice: string | undefined;
     if (callback !== undefined && "error" in callback) {
       console.warn("A sign-in link came back with an error:", callback.error);
       notice = messageFor(callback.error, "link");
-    } else if (callback !== undefined && !hasStoredVerifier(this.#storage)) {
+    } else if (callback !== undefined && !hasStoredVerifier(this.#storage, callback.flowId)) {
       notice = ANOTHER_BROWSER;
     } else if (callback !== undefined) {
-      code = callback.code;
+      link = callback;
     }
     // A callback that will not be exchanged leaves the address now; one that will, once it is.
-    if (callback !== undefined && code === undefined) this.#place.replace(withoutCallback(href));
-    if (code !== undefined || hasStoredSession(this.#storage)) void this.#connect(code, notice);
+    if (callback !== undefined && link === undefined) this.#place.replace(withoutCallback(href));
+    if (link !== undefined || hasStoredSession(this.#storage)) void this.#connect(link, notice);
     else if (notice !== undefined) this.#set({ status: "signed-out", notice });
   }
 
   /** Load the client, exchange the link's code if there is one, and read the session. */
-  async #connect(code: string | undefined, notice: string | undefined): Promise<void> {
+  async #connect(link: LinkBack | undefined, notice: string | undefined): Promise<void> {
     this.#set({ status: "checking", ...(notice === undefined ? {} : { notice }) });
     let said = notice;
     let session: Session | null = null;
@@ -164,8 +169,13 @@ export class Account {
       // The stored session, read and refreshed if it needs to be.
       const started = await client.auth.initialize();
       if (started.error) console.warn("The stored session could not be read:", started.error);
-      if (code !== undefined) {
-        const { error } = await client.auth.exchangeCodeForSession(code);
+      if (link !== undefined) {
+        // By its flow id, the code is exchanged with its own request's verifier, and a failure
+        // takes only that one out of this browser, leaving the other links asked for here.
+        const { error } = await client.auth.exchangeCodeForSession(
+          link.code,
+          link.flowId === undefined ? undefined : { flowId: link.flowId },
+        );
         if (error) {
           console.warn("The sign-in link could not be exchanged:", error);
           said = messageFor(error, "link");
@@ -174,9 +184,9 @@ export class Account {
       session = (await client.auth.getSession()).data.session;
     } catch (error) {
       console.error("The account could not be read:", error);
-      if (code !== undefined) said = UNREACHABLE;
+      if (link !== undefined) said = UNREACHABLE;
     } finally {
-      if (code !== undefined) this.#place.replace(withoutCallback(this.#place.href()));
+      if (link !== undefined) this.#place.replace(withoutCallback(this.#place.href()));
     }
     const state = stateOf(session);
     this.#set(
@@ -227,10 +237,15 @@ export class Account {
     try {
       const client = await this.client();
       const { error } = await client.auth.signOut({ scope: "local" });
-      // The client takes the session out of this browser even when the server could not be told.
       if (error) console.warn("Signing out could not reach the server:", error);
-      const { session } = (await client.auth.getSession()).data;
-      if (session !== null) return NOT_SIGNED_OUT;
+      // The client keeps the session when it could not read it first, as when its access token has
+      // run out and the server cannot be reached to refresh it; leaving this browser needs no
+      // server, so the session is taken out here, and the person is signed out only once it is.
+      if (this.#storage !== undefined) {
+        if (!forgetStoredSession(this.#storage)) return NOT_SIGNED_OUT;
+      } else if ((await client.auth.getSession()).data.session !== null) {
+        return NOT_SIGNED_OUT;
+      }
     } catch (error) {
       console.error("Signing out failed:", error);
       return NOT_SIGNED_OUT;

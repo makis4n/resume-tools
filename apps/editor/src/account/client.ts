@@ -13,8 +13,27 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 /** Where the client keeps the session in local storage, and the prefix of its PKCE verifiers. */
 export const STORAGE_KEY = "resume-tools-auth";
 
-/** The key the client keeps the latest sign-in's PKCE code verifier under, until it is used. */
+/**
+ * The key the client mirrors the latest sign-in's PKCE code verifier under: what a link without a
+ * flow id (`sb_flow_id`) is exchanged with. Links the editor asks for carry their flow id.
+ */
 export const VERIFIER_KEY = `${STORAGE_KEY}-code-verifier`;
+
+/**
+ * The key the client keeps one sign-in's own PKCE code verifier under, by its flow id: each link
+ * asked for has a slot of its own, so asking again, or a send that failed, leaves earlier links'.
+ */
+export function verifierKeyOf(flowId: string): string {
+  return `${STORAGE_KEY}-flow-${flowId}-code-verifier`;
+}
+
+/** What a flow id looks like, as the client makes and checks them; anything else is none. */
+const FLOW_ID = /^[a-zA-Z0-9_-]{8,64}$/;
+
+/** `flowId` when it looks like one the client makes, or none. */
+export function flowIdOf(flowId: string | null | undefined): string | undefined {
+  return typeof flowId === "string" && FLOW_ID.test(flowId) ? flowId : undefined;
+}
 
 /** Where the editor's accounts are: the project's address and its publishable key. */
 export interface AccountsConfig {
@@ -83,12 +102,34 @@ export function hasStoredSession(storage: SessionStorage | undefined = browserSt
 }
 
 /**
- * Whether this browser asked for a sign-in link it has not used: the PKCE verifier the client kept
- * when it asked, which the link's code is exchanged with. A link opened where there is none was
- * asked for in another browser, and cannot sign in here.
+ * Whether this browser asked for the sign-in link with `flowId` and has not used it: the PKCE
+ * verifier the client kept for that link, which its code is exchanged with. A link opened where
+ * there is none was asked for in another browser, and cannot sign in here; a verifier kept for some
+ * other link this browser asked for does not count. Without a flow id, the latest link's verifier.
  */
-export function hasStoredVerifier(storage: SessionStorage | undefined = browserStorage()): boolean {
-  return read(storage, VERIFIER_KEY) !== null;
+export function hasStoredVerifier(
+  storage: SessionStorage | undefined = browserStorage(),
+  flowId?: string,
+): boolean {
+  return read(storage, flowId === undefined ? VERIFIER_KEY : verifierKeyOf(flowId)) !== null;
+}
+
+/**
+ * Take the stored session out of `storage`, as the client does when it signs out: what signing out
+ * of this browser comes to when the client could not finish it, as when the session's access token
+ * has run out and the server cannot be reached to refresh it. Needs no server. Returns whether the
+ * session is gone.
+ */
+export function forgetStoredSession(
+  storage: SessionStorage | undefined = browserStorage(),
+): boolean {
+  try {
+    storage?.removeItem(STORAGE_KEY);
+    storage?.removeItem(`${STORAGE_KEY}-user`);
+  } catch {
+    // A storage that refuses the removal keeps the session; the check below says so.
+  }
+  return !hasStoredSession(storage);
 }
 
 /** What makes the client: the browser's, or one with its own storage in Node's tests. */
@@ -115,6 +156,9 @@ export async function createAccountClient(
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: false,
+      // Each link leads back with its flow id (`sb_flow_id`), so its code is exchanged with its own
+      // verifier, and a link opened where it was not asked for is known by its missing slot.
+      experimental: { appendPkceFlowIdToRedirects: true },
       ...(options.storage === undefined ? {} : { storage: options.storage }),
     },
   });

@@ -4,11 +4,14 @@ import { callbackOf, withoutCallback } from "./callback";
 import {
   accountsConfig,
   accountsConfigured,
+  flowIdOf,
+  forgetStoredSession,
   hasStoredSession,
   hasStoredVerifier,
   type SessionStorage,
   STORAGE_KEY,
   VERIFIER_KEY,
+  verifierKeyOf,
 } from "./client";
 
 /** A storage holding `entries`, as local storage would. */
@@ -85,6 +88,47 @@ describe("hasStoredVerifier", () => {
     expect(hasStoredVerifier(refusing)).toBe(false);
     expect(hasStoredVerifier(undefined)).toBe(false);
   });
+
+  it("finds a link's own verifier by its flow id, and no other link's", () => {
+    const flow = "0123456789abcdef0123456789abcdef";
+    const other = "fedcba9876543210fedcba9876543210";
+    // The client's own key for that request's verifier.
+    expect(verifierKeyOf(flow)).toBe(`${STORAGE_KEY}-flow-${flow}-code-verifier`);
+    const asked = storageOf({ [verifierKeyOf(flow)]: '"invented-verifier"' });
+    expect(hasStoredVerifier(asked, flow)).toBe(true);
+    // A browser that asked for some other link keeps a verifier, but not this link's.
+    const elsewhere = storageOf({
+      [VERIFIER_KEY]: '"invented-verifier"',
+      [verifierKeyOf(other)]: '"invented-verifier"',
+    });
+    expect(hasStoredVerifier(elsewhere, flow)).toBe(false);
+    expect(hasStoredVerifier(refusing, flow)).toBe(false);
+  });
+});
+
+describe("forgetStoredSession", () => {
+  it("takes the stored session out, and says whether it is gone", () => {
+    const storage = storageOf({
+      [STORAGE_KEY]: '{"refresh_token":"invented-refresh"}',
+      [`${STORAGE_KEY}-user`]: '{"user":{}}',
+      [VERIFIER_KEY]: '"invented-verifier"',
+    });
+    expect(forgetStoredSession(storage)).toBe(true);
+    expect(hasStoredSession(storage)).toBe(false);
+    expect(storage.getItem(`${STORAGE_KEY}-user`)).toBeNull();
+    expect(forgetStoredSession(storageOf({}))).toBe(true);
+  });
+
+  it("says the session is still there when the storage refuses to let it go", () => {
+    const kept = storageOf({ [STORAGE_KEY]: '{"refresh_token":"invented-refresh"}' });
+    const stubborn: SessionStorage = {
+      ...kept,
+      removeItem: () => {
+        throw new Error("blocked");
+      },
+    };
+    expect(forgetStoredSession(stubborn)).toBe(false);
+  });
 });
 
 describe("the sign-in callback in the address", () => {
@@ -94,6 +138,18 @@ describe("the sign-in callback in the address", () => {
     });
     expect(callbackOf("http://localhost:5173/")).toBeUndefined();
     expect(callbackOf("http://localhost:5173/?measure=1")).toBeUndefined();
+  });
+
+  it("reads the flow id of the request a code answers, when it looks like one", () => {
+    const flow = "0123456789abcdef0123456789abcdef";
+    expect(callbackOf(`http://localhost:5173/?code=c&sb_flow_id=${flow}`)).toEqual({
+      code: "c",
+      flowId: flow,
+    });
+    expect(callbackOf("http://localhost:5173/?code=c&sb_flow_id=../../x")).toEqual({ code: "c" });
+    expect(callbackOf("http://localhost:5173/?code=c&sb_flow_id=short")).toEqual({ code: "c" });
+    expect(flowIdOf(flow)).toBe(flow);
+    expect(flowIdOf(null)).toBeUndefined();
   });
 
   it("reads an error's code, from the query or the fragment, before any code", () => {
