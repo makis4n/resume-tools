@@ -336,7 +336,7 @@ it; from item 7 on, Stage 2 uses item 4's client.
    Gets an adversarial review. Done when an integration test with two devices on one account shows
    a built-in document and a PDF import saved on one open on the other, a conflict ending in two
    documents, and a deletion reaching the other device.
-8. [ ] **Originals.** On saving a `.tex` import: `original.zip` and `import.bin` uploaded under the
+8. [x] **Originals.** On saving a `.tex` import: `original.zip` and `import.bin` uploaded under the
    owner's folder; on opening it on another device: both downloaded and unpacked into the store's
    package and import record. Deleting the document deletes both. Gets an adversarial review. Done
    when an integration test shows a `.tex` import's original and import files arrive on the second

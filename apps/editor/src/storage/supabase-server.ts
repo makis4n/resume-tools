@@ -120,22 +120,9 @@ export class SupabaseServer implements SyncServer {
     private readonly user: string,
   ) {}
 
-  /**
-   * The `Authorization` a request of `user`'s carries. The client reads its session from the
-   * browser's storage, which every tab shares, at each request: another tab signing in as another
-   * account changes it under this one, which hears of it only later. So the session is read here,
-   * checked to be `user`'s, and its token set on the request itself, which the client then keeps.
-   * Another account's session, or none, passes (`ServerUnavailable`): the queue waits, and is
-   * stopped or moved to the new account as soon as this tab hears of it.
-   */
-  private async authorization(): Promise<string> {
-    const { data, error } = await this.client.auth.getSession();
-    const session = data.session;
-    if (error !== null || session === null)
-      throw new ServerUnavailable("the account's session could not be read", { cause: error });
-    if (session.user.id !== this.user)
-      throw new ServerUnavailable("this browser's session is now another account's");
-    return `Bearer ${session.access_token}`;
+  /** The `Authorization` a request of `user`'s carries (`authorizationOf`). */
+  private authorization(): Promise<string> {
+    return authorizationOf(this.client, this.user);
   }
 
   async list(): Promise<ServerEntry[]> {
@@ -235,6 +222,24 @@ export class SupabaseServer implements SyncServer {
       .setHeader("Authorization", authorization);
     if (answer.error) throw failureOf(answer, "delete the document");
   }
+}
+
+/**
+ * The `Authorization` a request of `user`'s carries. The client reads its session from the
+ * browser's storage, which every tab shares, at each request: another tab signing in as another
+ * account changes it under this one, which hears of it only later. So the session is read here,
+ * checked to be `user`'s, and its token set on the request itself, which the client then keeps.
+ * Another account's session, or none, passes (`ServerUnavailable`): the queue waits, and is
+ * stopped or moved to the new account as soon as this tab hears of it.
+ */
+export async function authorizationOf(client: SupabaseClient, user: string): Promise<string> {
+  const { data, error } = await client.auth.getSession();
+  const session = data.session;
+  if (error !== null || session === null)
+    throw new ServerUnavailable("the account's session could not be read", { cause: error });
+  if (session.user.id !== user)
+    throw new ServerUnavailable("this browser's session is now another account's");
+  return `Bearer ${session.access_token}`;
 }
 
 /** What a write that went through says: the account's revision and time now. */

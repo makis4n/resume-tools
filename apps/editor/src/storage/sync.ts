@@ -31,8 +31,10 @@
  *   (`ServerRefused`) marks the document's revision in the store (`refused`): it stays in this
  *   browser, a `refused` event says so, and it is sent again only once a save changes it.
  *
- * Originals (`original.zip`, `import.bin`, decision 0090) are item 8's: `OriginalsHooks` are where
- * it plugs in.
+ * - **An imported `.tex` document's two files** (`original.zip`, `import.bin`, decision 0090) go
+ *   through `OriginalsHooks`, which item 8's `Originals` implements: uploaded once the account has
+ *   taken the row, and the store marked once they are there (`filesSent`); until then the document
+ *   waits, is sent again by the next round, and is not in the account. Deleted before the row is.
  */
 
 import { cleanUpload, ServerRefused, ServerUnavailable, type SyncServer } from "./server";
@@ -63,10 +65,15 @@ export interface Locks {
 /**
  * Where item 8 keeps an imported `.tex` document's original files in step with its row. Each is
  * called only for a `tex` document; one that throws counts as a failed round, which waits and is
- * tried again.
+ * tried again, and one that throws `ServerRefused` marks the document refused, as a row's refusal
+ * does.
  */
 export interface OriginalsHooks {
-  /** The account took the document's row: inserted, the first time. */
+  /**
+   * The account holds the document's row, and not yet its files: upload them. `inserted` says the
+   * row was inserted in this send. Once it settles the store marks the files sent; without this
+   * hook they are taken as sent.
+   */
   sent?(id: string, inserted: boolean): Promise<void>;
   /** The document is about to be deleted from the account. */
   removing?(id: string): Promise<void>;
@@ -289,7 +296,10 @@ export class SyncQueue {
         this.signingOut = false;
       }
       const left = (await this.store.syncRows()).filter(
-        (row) => row.owner === session.account && (row.pending || row.removed) && !row.firstPass,
+        (row) =>
+          row.owner === session.account &&
+          (row.pending || row.removed || row.filesOwed) &&
+          !row.firstPass,
       );
       if (left.length > 0) {
         this.pump();
@@ -366,7 +376,7 @@ export class SyncQueue {
     const rows = (await this.store.syncRows()).filter(
       (row) =>
         row.owner === session.account &&
-        (row.pending || row.removed) &&
+        (row.pending || row.removed || row.filesOwed) &&
         !row.firstPass &&
         !row.refused,
     );
@@ -421,15 +431,30 @@ export class SyncQueue {
     }
   }
 
-  /** Send one row as the store held it at the round's start, and keep what the account said. */
-  private async send(row: SyncRow, { account, server }: Session): Promise<void> {
+  /**
+   * Send one row as the store held it at the round's start, and keep what the account said; then an
+   * imported `.tex` document's files, while the account lacks them.
+   */
+  private async send(row: SyncRow, session: Session): Promise<void> {
     if (row.removed) {
       if (row.kind === "tex") await this.hooks.removing?.(row.id);
-      await server.remove(row.id);
+      await session.server.remove(row.id);
       const dropped = await this.store.remove(row.id);
       this.emit({ type: "removed", id: row.id, ...(dropped === undefined ? {} : { dropped }) });
       return;
     }
+    const inserted = row.pending ? await this.sendRow(row, session) : false;
+    if (inserted === undefined || !row.filesOwed || this.session !== session) return;
+    await this.hooks.sent?.(row.id, inserted);
+    await this.store.markFilesSent(row.id);
+  }
+
+  /**
+   * Send a row, and keep what the account said. Returns whether the account took it, as an insert
+   * or not, or undefined when it refused it over another device's version, which the store then
+   * holds.
+   */
+  private async sendRow(row: SyncRow, { account, server }: Session): Promise<boolean | undefined> {
     // Cleaned as the account can keep it; a document too large is refused here, unsent.
     const upload = cleanUpload({
       id: row.id,
@@ -445,16 +470,16 @@ export class SyncQueue {
         : await server.update(upload, row.serverRevision);
     if (result.ok) {
       await this.store.markSent(row.id, row.revision, result.revision);
-      if (row.kind === "tex") await this.hooks.sent?.(row.id, inserting);
-      return;
+      return inserting;
     }
     // Refused: the account's version, if it has one, keeps the id.
     const theirs = result.reason === "missing" ? null : await server.get(row.id);
     if (theirs === null) {
       this.gone(row.id, await this.store.goneFromAccount(row.id, account, row.serverRevision));
-      return;
+      return undefined;
     }
     await this.broughtIn(theirs.id, theirs.kind, await this.store.bringIn(theirs, account));
+    return undefined;
   }
 
   /**

@@ -10,8 +10,14 @@
  * only once it has; otherwise the person stays signed in and the unsent documents are named.
  * The first sign-in's question is kept on this state, unanswered, for item 9 to ask: nothing only
  * in this browser is uploaded until the person answers.
+ *
+ * An imported `.tex` document's two files (item 8) go through the queue's hooks, `Originals`, which
+ * reach the signed-in account's bucket (`SupabaseOriginals`); the editor opens a document through
+ * them (`originals`), so that one brought in from the account downloads its files first.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { Originals } from "../storage/originals";
+import { type OriginalsBucket, SupabaseOriginals } from "../storage/originals-bucket";
 import type { SyncServer } from "../storage/server";
 import type { DocumentStore } from "../storage/store";
 import { SupabaseServer } from "../storage/supabase-server";
@@ -36,12 +42,17 @@ export interface SyncState {
 /** Makes the server the queue sends to as `user`, from the account's client. */
 export type ServerMaker = (client: SupabaseClient, user: string) => SyncServer;
 
+/** Makes the bucket an import's files go to as `user`, from the account's client. */
+export type BucketMaker = (client: SupabaseClient, user: string) => OriginalsBucket;
+
 const NOTHING: SyncState = { question: 0 };
 
 export class AccountSync {
   readonly #account: Account;
   readonly #makeServer: ServerMaker;
+  readonly #makeBucket: BucketMaker;
   #queue: SyncQueue | undefined;
+  #originals: Originals | undefined;
   /** The user the queue was last told to sign in as, or none. */
   #target: string | undefined;
   #state: SyncState = NOTHING;
@@ -51,9 +62,11 @@ export class AccountSync {
   constructor(
     account: Account,
     makeServer: ServerMaker = (client, user) => new SupabaseServer(client, user),
+    makeBucket: BucketMaker = (client, user) => new SupabaseOriginals(client, user),
   ) {
     this.#account = account;
     this.#makeServer = makeServer;
+    this.#makeBucket = makeBucket;
   }
 
   /** The state now; the same object until it changes, as `useSyncExternalStore` asks. */
@@ -77,13 +90,23 @@ export class AccountSync {
   }
 
   /**
+   * Where the editor resolves an imported template while a store is attached: the store's, and for
+   * a document brought in from the account, once its files are downloaded (`Originals.templateOf`).
+   */
+  get originals(): Originals | undefined {
+    return this.#originals;
+  }
+
+  /**
    * Make the page's queue over `store`, and have it follow the account from now on. Returns what
    * closes the queue and stops following, as the store closes.
    */
   attach(store: DocumentStore, options: Omit<SyncOptions, "store"> = {}): () => void {
     this.#queue?.close();
-    const queue = new SyncQueue({ ...options, store });
+    const originals = new Originals(store);
+    const queue = new SyncQueue({ hooks: originals, ...options, store });
     this.#queue = queue;
+    this.#originals = originals;
     this.#target = undefined;
     const stopEvents = queue.on((event) => this.#heard(event));
     const stopFollowing = this.#account.subscribe(() => this.#follow());
@@ -92,8 +115,10 @@ export class AccountSync {
       stopFollowing();
       stopEvents();
       queue.close();
+      originals.connect(undefined);
       if (this.#queue === queue) {
         this.#queue = undefined;
+        this.#originals = undefined;
         this.#target = undefined;
       }
     };
@@ -146,16 +171,21 @@ export class AccountSync {
     const user = this.#account.userId();
     if (user === this.#target) return;
     this.#target = user;
+    const originals = this.#originals;
     if (user === undefined) {
       queue.stop();
+      originals?.connect(undefined);
       this.#set(NOTHING);
       return;
     }
+    // Until the new account's bucket is reached, none is: the old one's must take nothing more.
+    originals?.connect(undefined);
     this.#account
       .client()
       .then((client) => {
         // Overtaken: another user, a sign-out, or another store, since this was asked.
         if (this.#queue !== queue || this.#target !== user) return;
+        originals?.connect(this.#makeBucket(client, user));
         return queue.signIn(user, this.#makeServer(client, user));
       })
       .catch((error: unknown) => {
