@@ -197,6 +197,77 @@ describe("an imported .tex document's files in the account (milestone 4 item 8)"
     expect(buckets.files(ADA, id)).toBeDefined();
   });
 
+  it("keeps a document owing its files when another account signs in without a sign-out", async () => {
+    const accounts = new FakeAccounts();
+    const buckets = new FakeBuckets();
+    const a = device();
+    const bucket = buckets.bucket(ADA);
+    bucket.offline = true;
+    a.originals.connect(bucket);
+    await a.queue.signIn(ADA, accounts.server(ADA, "a"));
+    const id = await a.store.importDocument(imported());
+    await eventually(() => accounts.documents(ADA).length === 1);
+    await vi.advanceTimersByTimeAsync(0);
+    await a.queue.settled();
+    expect(await a.store.syncRow(id)).toMatchObject({ pending: false, filesOwed: true });
+    // Ada's session ends elsewhere, and Bo signs in on this browser.
+    a.queue.stop();
+    await a.queue.signIn(BO, accounts.server(BO, "a"));
+    expect(await a.store.syncRow(id)).toMatchObject({ owner: ADA, filesOwed: true });
+    expect((await a.store.templateOf(TEMPLATE, id))?.import).toBeDefined();
+    // Ada again, online: the files reach her account.
+    a.queue.stop();
+    bucket.offline = false;
+    await a.queue.signIn(ADA, accounts.server(ADA, "a"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    await eventually(async () => (await a.store.places()).get(id) === "in-account");
+    expect(buckets.files(ADA, id)).toBeDefined();
+  });
+
+  it("uploads no files for a document another device deleted while they were owed", async () => {
+    const accounts = new FakeAccounts();
+    const buckets = new FakeBuckets();
+    const a = device();
+    const bucket = buckets.bucket(ADA);
+    bucket.offline = true;
+    a.originals.connect(bucket);
+    await a.queue.signIn(ADA, accounts.server(ADA, "a"));
+    const id = await a.store.importDocument(imported());
+    await eventually(() => accounts.documents(ADA).length === 1);
+    await vi.advanceTimersByTimeAsync(0);
+    await a.queue.settled();
+    expect(await a.store.syncRow(id)).toMatchObject({ pending: false, filesOwed: true });
+    accounts.anotherDevice(ADA).remove(id);
+    bucket.offline = false;
+    await vi.advanceTimersByTimeAsync(60_000);
+    await a.queue.settled();
+    await eventually(async () => (await a.store.syncRow(id)) === undefined);
+    expect(accounts.documents(ADA)).toEqual([]);
+    expect(buckets.files(ADA, id)).toBeUndefined();
+    expect(bucket.puts).toBe(0);
+    expect(a.events).toContainEqual(expect.objectContaining({ type: "removed", id }));
+  });
+
+  it("deletes the files of a document another device deleted while they went up", async () => {
+    const accounts = new FakeAccounts();
+    const buckets = new FakeBuckets();
+    const a = device();
+    const bucket = buckets.bucket(ADA);
+    const put = bucket.put.bind(bucket);
+    vi.spyOn(bucket, "put").mockImplementationOnce(async (document, files) => {
+      // Another device deletes the document, finding no files to delete, as these go up.
+      accounts.anotherDevice(ADA).remove(document);
+      await put(document, files);
+    });
+    a.originals.connect(bucket);
+    await a.queue.signIn(ADA, accounts.server(ADA, "a"));
+    const id = await a.store.importDocument(imported());
+    await eventually(async () => (await a.store.syncRow(id)) === undefined);
+    await a.queue.settled();
+    expect(accounts.documents(ADA)).toEqual([]);
+    expect(buckets.files(ADA, id)).toBeUndefined();
+  });
+
   it("downloads the files when a document brought in is opened, not when the list refreshes", async () => {
     const accounts = new FakeAccounts();
     const buckets = new FakeBuckets();

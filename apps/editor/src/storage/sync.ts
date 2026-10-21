@@ -34,7 +34,8 @@
  * - **An imported `.tex` document's two files** (`original.zip`, `import.bin`, decision 0090) go
  *   through `OriginalsHooks`, which item 8's `Originals` implements: uploaded once the account has
  *   taken the row, and the store marked once they are there (`filesSent`); until then the document
- *   waits, is sent again by the next round, and is not in the account. Deleted before the row is.
+ *   waits, is sent again by the next round, and is not in the account. Deleted before the row is;
+ *   files owed by a document another device deleted meanwhile are deleted, not left behind.
  */
 
 import { cleanUpload, ServerRefused, ServerUnavailable, type SyncServer } from "./server";
@@ -221,9 +222,16 @@ export class SyncQueue {
     this.lastSent.clear();
     this.store.setAccount(account);
     // Another account's documents, left by a sign-in that did not sign out, go once they hold
-    // nothing pending; those that do stay, out of sight, until it signs in again.
+    // nothing pending, files owed included; those that do stay, out of sight, until it signs in
+    // again.
     for (const row of await this.store.syncRows())
-      if (row.owner !== undefined && row.owner !== account && !row.pending && !row.removed)
+      if (
+        row.owner !== undefined &&
+        row.owner !== account &&
+        !row.pending &&
+        !row.removed &&
+        !row.filesOwed
+      )
         await this.store.remove(row.id);
     if (this.session !== session) return;
     const ownerless = (await this.store.syncRows()).filter(onlyHere).length;
@@ -445,8 +453,28 @@ export class SyncQueue {
     }
     const inserted = row.pending ? await this.sendRow(row, session) : false;
     if (inserted === undefined || !row.filesOwed || this.session !== session) return;
-    await this.hooks.sent?.(row.id, inserted);
+    if (this.hooks.sent !== undefined) {
+      // Sent before, and still owing its files: another device may have deleted it since.
+      if (!row.pending && !(await this.stillInAccount(row.id, session))) return;
+      await this.hooks.sent(row.id, inserted);
+      // Deleted elsewhere while they went up, which that deletion could not have taken.
+      if (!(await this.stillInAccount(row.id, session))) return;
+    }
     await this.store.markFilesSent(row.id);
+  }
+
+  /**
+   * Whether the account still holds a document whose files this browser owes. When it does not,
+   * whatever of its files went up is deleted, and the document goes from this browser as any the
+   * account no longer has; until the files are deleted, it stays to be tried again.
+   */
+  private async stillInAccount(id: string, session: Session): Promise<boolean> {
+    if ((await session.server.get(id)) !== null) return true;
+    const row = await this.store.syncRow(id);
+    if (row === undefined || this.session !== session) return false;
+    await this.hooks.removing?.(id);
+    this.gone(id, await this.store.goneFromAccount(id, session.account, row.serverRevision));
+    return false;
   }
 
   /**
