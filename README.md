@@ -107,7 +107,7 @@ It accepts browser calls from `http://localhost:5173` by default, so it runs bes
 
 ### What CI runs
 
-CI runs exactly the checks above, the editor's and the ATS's. If they pass on your machine they pass there. It also runs three checks on every pull request: `bash .github/scripts/check-repo.sh`, which catches the mistakes listed in AGENTS.md that show in the file list, a check that every schema in `packages/contracts` is a valid schema (the command is in AGENTS.md), and a check that the pull request's title follows the commit convention below (decision 0029).
+CI runs exactly the checks above, the editor's and the ATS's. If they pass on your machine they pass there. A change to accounts (the stack in `apps/editor/supabase/`, the editor's account and storage code, the integration tests, or the dependencies) also runs the `accounts` workflow, which starts the local Supabase stack on the runner and runs its lint, `supabase test db` and `test:integration` (decision 0096). It also runs three checks on every pull request: `bash .github/scripts/check-repo.sh`, which catches the mistakes listed in AGENTS.md that show in the file list, a check that every schema in `packages/contracts` is a valid schema (the command is in AGENTS.md), and a check that the pull request's title follows the commit convention below (decision 0029).
 
 ## Ownership
 

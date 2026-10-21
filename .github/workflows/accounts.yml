@@ -1,0 +1,70 @@
+name: accounts
+
+# The editor's accounts on the real local Supabase stack (decision 0096): the database's lint, its
+# two-account tests and the editor's integration tests. The editor's own workflow runs everything
+# else, with a fake of the server side, and needs no Docker.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/editor/supabase/**"
+      - "apps/editor/src/account/**"
+      - "apps/editor/src/storage/**"
+      - "apps/editor/src/**/*.integration.test.ts"
+      - "apps/editor/scripts/test-integration.ts"
+      - "apps/editor/vitest.integration.config.ts"
+      - "apps/editor/package.json"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/accounts.yml"
+  pull_request:
+    paths:
+      - "apps/editor/supabase/**"
+      - "apps/editor/src/account/**"
+      - "apps/editor/src/storage/**"
+      - "apps/editor/src/**/*.integration.test.ts"
+      - "apps/editor/scripts/test-integration.ts"
+      - "apps/editor/vitest.integration.config.ts"
+      - "apps/editor/package.json"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/accounts.yml"
+
+permissions:
+  contents: read
+
+# A newer push to a pull request cancels the older run; every push to main gets its own group, so
+# each merge keeps its result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  stack:
+    runs-on: ubuntu-latest
+    # Decision 0096: over ten minutes and the plan is revised. The limit stops a stuck start.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The pinned CLI starts the stack in the runner's Docker, without the services the editor
+      # does not use. Its keys are the fixed local development keys: no secret is needed.
+      - name: Start the local Supabase stack
+        run: |
+          start=$(date +%s)
+          pnpm --filter @resume-tools/editor stack:start > /dev/null
+          echo "The stack started in $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+      - run: pnpm --filter @resume-tools/editor exec supabase db lint --fail-on error
+      - run: pnpm --filter @resume-tools/editor exec supabase test db
+      - run: pnpm --filter @resume-tools/editor test:integration
+        env:
+          REQUIRE_STACK: "1"
+      - if: always()
+        run: pnpm --filter @resume-tools/editor stack:stop
