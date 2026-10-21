@@ -11,6 +11,12 @@
  * The first sign-in's question is kept on this state, unanswered, for item 9 to ask: nothing only
  * in this browser is uploaded until the person answers.
  *
+ * Item 9 adds the first save's notice (decision 0091): the first time an account is signed in on
+ * this browser, the queue does not start until the person has read what saving to the account
+ * sends and keeps (`telling`, answered by `tell`), which the store then remembers for the account.
+ * Until then nothing is sent or brought in, and the editor works as signed out. The state also
+ * carries where each document is (`places`), for the list's marks and the header's line.
+ *
  * An imported `.tex` document's two files (item 8) go through the queue's hooks, `Originals`, which
  * reach the signed-in account's bucket (`SupabaseOriginals`); the editor opens a document through
  * them (`originals`), so that one brought in from the account downloads its files first.
@@ -19,7 +25,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { Originals } from "../storage/originals";
 import { type OriginalsBucket, SupabaseOriginals } from "../storage/originals-bucket";
 import type { SyncServer } from "../storage/server";
-import type { DocumentStore } from "../storage/store";
+import type { DocumentStore, Where } from "../storage/store";
 import { SupabaseServer } from "../storage/supabase-server";
 import { type SyncEvent, type SyncOptions, SyncQueue } from "../storage/sync";
 import type { Account } from "./account";
@@ -37,6 +43,15 @@ export interface SyncState {
    * `refused` by the account as they are (decision 0098).
    */
   unsent?: { id: string; title: string; refused?: true }[];
+  /**
+   * The first save's notice is due (decision 0091): the account is signed in, and has not been told
+   * in this browser what saving to it sends; the queue waits for `tell`.
+   */
+  telling?: true;
+  /** The queue is syncing the signed-in account's documents. */
+  syncing?: true;
+  /** Where each document the list shows is, by its id, once read. */
+  places?: ReadonlyMap<string, Where>;
 }
 
 /** Makes the server the queue sends to as `user`, from the account's client. */
@@ -56,6 +71,11 @@ export class AccountSync {
   /** The user the queue was last told to sign in as, or none. */
   #target: string | undefined;
   #state: SyncState = NOTHING;
+  /** The store the queue is over, while one is attached. */
+  #store: DocumentStore | undefined;
+  /** Whether the places are being read, and whether to read them again once they are. */
+  #placing = false;
+  #placeAgain = false;
   readonly #listeners = new Set<() => void>();
   readonly #events = new Set<(event: SyncEvent) => void>();
 
@@ -107,18 +127,23 @@ export class AccountSync {
     const queue = new SyncQueue({ hooks: originals, ...options, store });
     this.#queue = queue;
     this.#originals = originals;
+    this.#store = store;
     this.#target = undefined;
     const stopEvents = queue.on((event) => this.#heard(event));
+    const stopStored = store.onStored(() => this.#readPlaces());
     const stopFollowing = this.#account.subscribe(() => this.#follow());
     this.#follow();
+    this.#readPlaces();
     return () => {
       stopFollowing();
+      stopStored();
       stopEvents();
       queue.close();
       originals.connect(undefined);
       if (this.#queue === queue) {
         this.#queue = undefined;
         this.#originals = undefined;
+        this.#store = undefined;
         this.#target = undefined;
       }
     };
@@ -139,6 +164,36 @@ export class AccountSync {
     this.#set({ ...this.#state, question: 0 });
   }
 
+  /** Give one document only in this browser to the account, as the list's "Add to account" does. */
+  async addToAccount(id: string): Promise<void> {
+    await this.#queue?.addToAccount(id);
+  }
+
+  /**
+   * The person has read the first save's notice: the store remembers it for the account, and the
+   * queue starts. A store that cannot keep it starts the queue all the same; the notice was read.
+   */
+  async tell(): Promise<void> {
+    const queue = this.#queue;
+    const store = this.#store;
+    const user = this.#target;
+    if (!this.#state.telling || queue === undefined || store === undefined || user === undefined)
+      return;
+    try {
+      await store.markTold(user);
+    } catch (error) {
+      console.error("That the person was told could not be kept:", error);
+    }
+    if (this.#queue !== queue || this.#target !== user) return;
+    this.#set(without(this.#state, "telling"));
+    this.#start(queue, user);
+  }
+
+  /** The person chose to stay signed in, over the sign-out warning: it goes. */
+  stay(): void {
+    if (this.#state.unsent !== undefined) this.#set(without(this.#state, "unsent"));
+  }
+
   /**
    * Sign out: what is pending is sent first, then the account's documents leave this browser and
    * the account signs out. When some could not be sent, nothing is removed, the person stays signed
@@ -154,7 +209,7 @@ export class AccountSync {
         return unsentNotice(result.unsent);
       }
     }
-    this.#set(NOTHING);
+    this.#set(this.#nothing());
     const problem = await this.#account.signOut();
     // Still signed in: the queue, stopped by its own sign-out, starts again.
     if (problem !== undefined) {
@@ -164,22 +219,44 @@ export class AccountSync {
     return problem;
   }
 
-  /** Bring the queue in line with the account: signed in as its user, or stopped. */
+  /**
+   * Bring the queue in line with the account: signed in as its user, once the person has been told
+   * what saving to it sends, or stopped.
+   */
   #follow(): void {
     const queue = this.#queue;
-    if (queue === undefined) return;
+    const store = this.#store;
+    if (queue === undefined || store === undefined) return;
     const user = this.#account.userId();
     if (user === this.#target) return;
     this.#target = user;
     const originals = this.#originals;
-    if (user === undefined) {
+    if (queue.account !== undefined) {
       queue.stop();
-      originals?.connect(undefined);
-      this.#set(NOTHING);
-      return;
+      this.#readPlaces();
     }
     // Until the new account's bucket is reached, none is: the old one's must take nothing more.
     originals?.connect(undefined);
+    this.#set(this.#nothing());
+    if (user === undefined) return;
+    store.wasTold(user).then(
+      (told) => {
+        if (this.#queue !== queue || this.#target !== user) return;
+        if (told) this.#start(queue, user);
+        else this.#set({ ...this.#state, telling: true });
+      },
+      (error: unknown) => {
+        console.error("Whether the person was told could not be read:", error);
+        if (this.#queue === queue && this.#target === user)
+          this.#set({ ...this.#state, telling: true });
+      },
+    );
+  }
+
+  /** Sign the queue in as `user`, on the account's client, with its bucket for the originals. */
+  #start(queue: SyncQueue, user: string): void {
+    const originals = this.#originals;
+    this.#set({ ...this.#state, syncing: true });
     this.#account
       .client()
       .then((client) => {
@@ -188,14 +265,49 @@ export class AccountSync {
         originals?.connect(this.#makeBucket(client, user));
         return queue.signIn(user, this.#makeServer(client, user));
       })
+      .then(() => this.#readPlaces())
       .catch((error: unknown) => {
         console.error("Syncing with the account could not start:", error);
-        if (this.#target === user) this.#target = undefined;
+        if (this.#target === user) {
+          this.#target = undefined;
+          this.#set(without(this.#state, "syncing"));
+        }
+      });
+  }
+
+  /** The state with nothing asked and nothing syncing, keeping the places as last read. */
+  #nothing(): SyncState {
+    const { places } = this.#state;
+    return places === undefined ? NOTHING : { ...NOTHING, places };
+  }
+
+  /** Read where each document is again, once the reading under way, if any, is done. */
+  #readPlaces(): void {
+    const queue = this.#queue;
+    if (queue === undefined) return;
+    if (this.#placing) {
+      this.#placeAgain = true;
+      return;
+    }
+    this.#placing = true;
+    queue
+      .places()
+      .then((places) => {
+        if (this.#queue === queue) this.#set({ ...this.#state, places });
+      })
+      .catch((error: unknown) => console.error("Where the documents are could not be read:", error))
+      .finally(() => {
+        this.#placing = false;
+        if (this.#placeAgain) {
+          this.#placeAgain = false;
+          this.#readPlaces();
+        }
       });
   }
 
   #heard(event: SyncEvent): void {
     if (event.type === "question") this.#set({ ...this.#state, question: event.count });
+    this.#readPlaces();
     for (const listener of this.#events) {
       try {
         listener(event);
@@ -206,8 +318,33 @@ export class AccountSync {
   }
 
   #set(next: SyncState): void {
-    if (next.question === this.#state.question && next.unsent === this.#state.unsent) return;
+    const now = this.#state;
+    if (
+      next.question === now.question &&
+      next.unsent === now.unsent &&
+      next.telling === now.telling &&
+      next.syncing === now.syncing &&
+      samePlaces(next.places, now.places)
+    )
+      return;
     this.#state = next;
     for (const listener of this.#listeners) listener();
   }
+}
+
+/** The state without one of its optional fields. */
+function without(state: SyncState, field: "unsent" | "telling" | "syncing"): SyncState {
+  const { [field]: _, ...rest } = state;
+  return rest;
+}
+
+/** Whether two readings of where the documents are say the same. */
+function samePlaces(
+  a: ReadonlyMap<string, Where> | undefined,
+  b: ReadonlyMap<string, Where> | undefined,
+): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined || a.size !== b.size) return false;
+  for (const [id, where] of a) if (b.get(id) !== where) return false;
+  return true;
 }

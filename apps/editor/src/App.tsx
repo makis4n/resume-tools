@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AccountEntry } from "./account/AccountEntry";
 import { type Account, accountFromEnv } from "./account/account";
-import { AccountSync } from "./account/account-sync";
+import { AccountSync, type SyncState } from "./account/account-sync";
+import { CHANGED_ON_DEVICE, copiedNotice } from "./account/messages";
 import { Controls } from "./editor/Controls";
 import {
   COULD_NOT_MAKE_PDF,
@@ -72,6 +73,7 @@ import { browserConsent } from "./pdf/consent";
 import { FilesUnavailable } from "./storage/originals";
 import {
   CANNOT_OPEN,
+  COPY_SUFFIX,
   canLeave,
   DocumentRefused,
   DocumentStore,
@@ -108,6 +110,23 @@ const NOT_SAVED = "This document could not be saved in this browser.";
 
 /** What the user reads once another tab has changed the open document. */
 const CHANGED_ELSEWHERE = "This document was changed in another tab.";
+
+/** The sync state of a page without accounts: nothing asked, nothing syncing, no places. */
+const NO_SYNC: SyncState = { question: 0 };
+const noSync = () => NO_SYNC;
+const subscribeToNothing = () => () => {};
+
+/**
+ * This device's version of a document kept as a copy (decision 0092), as the queue said: of the
+ * document `id`, as `copy`, titled `title`, because the account's version took its place or the
+ * account no longer has it.
+ */
+interface Copied {
+  id: string;
+  copy: string;
+  title: string;
+  why: "conflict" | "deleted";
+}
 
 /** What the user reads while a fit to one page runs, and when no setting it tries fits. */
 const FITTING = "Fitting…";
@@ -227,6 +246,8 @@ interface Open {
   canRedo: boolean;
   /** Whether another tab has changed it since it was read: it takes no edits until read again. */
   stale: boolean;
+  /** The change came from the account, made on another device (decision 0092). */
+  changedOn?: "device";
   /** Whether its newest save could not be written; it stays open until one is. */
   unsaved: boolean;
   /**
@@ -290,6 +311,13 @@ function Editor({ sync }: { sync: AccountSync | undefined }) {
   const opening = useRef(0);
   /** The documents for the list, newest first; undefined until the store has listed them. */
   const [documents, setDocuments] = useState<Summary[]>();
+  /**
+   * The account's sync, as the list marks and offers it (milestone 4 item 9): where each document
+   * is, and whether the queue syncs a signed-in account.
+   */
+  const synced = useSyncExternalStore(sync?.subscribe ?? subscribeToNothing, sync?.state ?? noSync);
+  /** The copies the queue kept of this device's versions (decision 0092), the latest last. */
+  const [copies, setCopies] = useState<Copied[]>([]);
   /** Why the list shows when a document was asked for, or what could not be done. */
   const [notice, setNotice] = useState<string>();
   const [open, setOpen] = useState<Open>();
@@ -409,9 +437,26 @@ function Editor({ sync }: { sync: AccountSync | undefined }) {
     openNow.current = open;
   });
 
+  /**
+   * The list again as the store has it now, while it is up, as the account brings documents in or
+   * takes them away (milestone 4 item 9); what it says stays.
+   */
+  const relist = async (kept: DocumentStore) => {
+    if (openNow.current !== undefined) return;
+    try {
+      const listed = await kept.list();
+      setDocuments((current) =>
+        current === undefined || openNow.current !== undefined ? current : listed,
+      );
+    } catch (error) {
+      console.error("The documents could not be listed again:", error);
+    }
+  };
+
   /** The list, fresh from the store, which writes what waits to be saved before it lists. */
   const showList = async (reason?: string) => {
     opening.current++;
+    setCopies([]);
     guard.current.forget();
     retypeGuard.current.forget();
     setRetyping(undefined);
@@ -494,6 +539,7 @@ function Editor({ sync }: { sync: AccountSync | undefined }) {
       unsaved: false,
     });
     setNotice(undefined);
+    setCopies([]);
     setShown(undefined);
     setError(undefined);
     setPdfError(undefined);
@@ -518,9 +564,11 @@ function Editor({ sync }: { sync: AccountSync | undefined }) {
     // What the store learns in the background reaches the open document: a flush the timer or the
     // page going away asked for, and another tab's change. Closing the store stops both.
     kept.onFlushed((result) => setOpen((current) => current && afterFlush(current, result)));
-    kept.onChanged((id) =>
+    kept.onChanged((id, by) =>
       setOpen((current) =>
-        current?.id === id && !current.stale ? { ...current, stale: true } : current,
+        current?.id === id && !current.stale
+          ? { ...current, stale: true, ...(by === undefined ? {} : { changedOn: by }) }
+          : current,
       ),
     );
     let owned: Compiler | undefined;
@@ -530,6 +578,16 @@ function Editor({ sync }: { sync: AccountSync | undefined }) {
     const stopSync = sync?.on((event) => {
       if (event.type === "removed" && event.dropped !== undefined)
         owned?.dropTemplate(event.dropped);
+      // A copy kept of this device's version is said, of the open document or by name (item 9).
+      if (event.type === "copied") {
+        const { id, copy, title, why } = event;
+        setCopies((before) => [
+          ...before.filter((each) => each.id !== id),
+          { id, copy, title, why },
+        ]);
+      }
+      // What the account brought in, or took away, shows in the list as it stands.
+      if (event.type !== "changed" && event.type !== "question") void relist(kept);
     });
     /**
      * What became of a retype of a locked part's words (decision 0042): kept, its page shown and
@@ -663,6 +721,14 @@ function Editor({ sync }: { sync: AccountSync | undefined }) {
       if (store.current === kept) store.current = undefined;
     };
   }, [sync]);
+
+  // Signing in or out changes whose documents the store shows: the list follows, each time
+  // `syncing` changes; `relist` reads only refs and state setters.
+  const syncing = synced.syncing === true;
+  useEffect(() => {
+    const kept = store.current;
+    if (kept !== undefined) void relist(kept);
+  }, [syncing]);
 
   useEffect(() => {
     if (!busy) {
@@ -1116,34 +1182,48 @@ function Editor({ sync }: { sync: AccountSync | undefined }) {
       );
     const importShown = pdfImport.importing ?? importing;
     return (
-      <DocumentList
-        documents={documents}
-        notice={notice}
-        onOpen={(id) => void openDocument(id)}
-        onNew={(template) => void startDocument(template)}
-        onDelete={(id) => void deleteDocument(id)}
-        // Imports run on the compiler's engine, which the tree's fonts come with.
-        {...(library === undefined ? {} : { onImport: (files: File[]) => void importFiles(files) })}
-        {...(importShown === undefined ? {} : { importing: importShown })}
-        onCancelImport={cancelImport}
-        pdfReading={{ consent: pdfConsent, onChange: setPdfConsent }}
-        {...(notice !== undefined && notice === offerFor && library !== undefined
-          ? { pdfOffer: { onChoose: (file: File) => void importFiles([file]) } }
-          : {})}
-        {...(pdf.step === "asking"
-          ? { pdfQuestion: { onAnswer: pdfImport.answerQuestion, onCancel: pdfImport.cancel } }
-          : {})}
-        {...(waiting === undefined
-          ? {}
-          : {
-              waiting: {
-                report: waiting.report,
-                onContinue: () => void continueImport(),
-                onStop: stopImport,
-                onMove: () => void moveImport(),
-              },
-            })}
-      />
+      <>
+        {copies.map(({ id, title, why }) => (
+          <p key={id} role="status">
+            {copiedNotice(title, why, false, COPY_SUFFIX)}
+          </p>
+        ))}
+        <DocumentList
+          documents={documents}
+          notice={notice}
+          onOpen={(id) => void openDocument(id)}
+          onNew={(template) => void startDocument(template)}
+          onDelete={(id) => void deleteDocument(id)}
+          // Imports run on the compiler's engine, which the tree's fonts come with.
+          {...(library === undefined
+            ? {}
+            : { onImport: (files: File[]) => void importFiles(files) })}
+          {...(importShown === undefined ? {} : { importing: importShown })}
+          onCancelImport={cancelImport}
+          pdfReading={{ consent: pdfConsent, onChange: setPdfConsent }}
+          {...(synced.places === undefined ? {} : { places: synced.places })}
+          // A document only in this browser is added to the account while it is signed in (item 9).
+          {...(sync !== undefined && synced.syncing === true
+            ? { onAddToAccount: (id: string) => void sync.addToAccount(id) }
+            : {})}
+          {...(notice !== undefined && notice === offerFor && library !== undefined
+            ? { pdfOffer: { onChoose: (file: File) => void importFiles([file]) } }
+            : {})}
+          {...(pdf.step === "asking"
+            ? { pdfQuestion: { onAnswer: pdfImport.answerQuestion, onCancel: pdfImport.cancel } }
+            : {})}
+          {...(waiting === undefined
+            ? {}
+            : {
+                waiting: {
+                  report: waiting.report,
+                  onContinue: () => void continueImport(),
+                  onStop: stopImport,
+                  onMove: () => void moveImport(),
+                },
+              })}
+        />
+      </>
     );
   }
 
@@ -1363,24 +1443,47 @@ function Editor({ sync }: { sync: AccountSync | undefined }) {
       </p>
     );
 
-  // Why the edits here are not being kept, when they are not: another tab's change, which a
-  // reload takes in, and which leaves nothing here worth trying again; or a save that failed,
-  // which a flush tries again, as the store also does by itself.
-  const saving = stale ? (
-    <p role="alert">
-      {CHANGED_ELSEWHERE}{" "}
-      <button type="button" onClick={() => void openDocument(id)}>
-        Reload
-      </button>
-    </p>
-  ) : unsaved ? (
-    <p role="alert">
-      {NOT_SAVED}{" "}
-      <button type="button" onClick={() => void store.current?.flush()}>
-        Retry
-      </button>
-    </p>
-  ) : null;
+  // Why the edits here are not being kept, when they are not: another tab's change, or another
+  // device's through the account (decision 0092), which a reload takes in, and which leaves nothing
+  // here worth trying again; or a save that failed, which a flush tries again, as the store also
+  // does by itself. Another device's change over saves the account had not taken kept them as a
+  // copy, which it names; one deleted there opens that copy in its place.
+  const copiedHere = copies.find((each) => each.id === id);
+  const elsewhere = copies.filter((each) => each.id !== id);
+  const saving = (
+    <>
+      {stale ? (
+        <p role="alert">
+          {copiedHere !== undefined
+            ? copiedNotice(copiedHere.title, copiedHere.why, true, COPY_SUFFIX)
+            : open.changedOn === "device"
+              ? CHANGED_ON_DEVICE
+              : CHANGED_ELSEWHERE}{" "}
+          {copiedHere?.why === "deleted" ? (
+            <button type="button" onClick={() => void openDocument(copiedHere.copy)}>
+              Open your version
+            </button>
+          ) : (
+            <button type="button" onClick={() => void openDocument(id)}>
+              Reload
+            </button>
+          )}
+        </p>
+      ) : unsaved ? (
+        <p role="alert">
+          {NOT_SAVED}{" "}
+          <button type="button" onClick={() => void store.current?.flush()}>
+            Retry
+          </button>
+        </p>
+      ) : null}
+      {elsewhere.map((each) => (
+        <p key={each.id} role="status">
+          {copiedNotice(each.title, each.why, false, COPY_SUFFIX)}
+        </p>
+      ))}
+    </>
+  );
 
   /**
    * Save the PDF of the page on screen, named after the open document's resume. What went wrong is

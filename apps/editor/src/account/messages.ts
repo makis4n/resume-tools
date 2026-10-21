@@ -240,12 +240,15 @@ export function messageFor(error: unknown, moment: Moment): string {
   }
 }
 
+/** Titles as a sentence names them: each in quotation marks, joined by commas. */
+const named = (titles: readonly string[]) => titles.map((title) => `“${title}”`).join(", ");
+
 /**
  * Signing out stopped before removing anything, since some documents are not in the account
  * (decision 0092): it names them, and the person stays signed in. A document whose saves have not
  * been sent yet waits for the connection; one the account refused (decision 0098, `refused`) is
- * never sent as it is, so waiting cannot help: it has to change, or go. Item 9 asks whether to sign
- * out all the same.
+ * never sent as it is, so waiting cannot help: it has to change, or go. The sign-out warning
+ * (milestone 4 item 9) asks, under it, whether to sign out all the same (`SIGN_OUT_ANYWAY`).
  */
 export function unsentNotice(unsent: readonly { title: string; refused?: boolean }[]): string {
   const waiting = unsent.filter((each) => each.refused !== true).map(({ title }) => title);
@@ -254,10 +257,73 @@ export function unsentNotice(unsent: readonly { title: string; refused?: boolean
     "You are still signed in: some documents are not in your account yet, so nothing was removed from this browser.",
   ];
   if (waiting.length > 0)
-    said.push(`Not saved yet: ${waiting.join(", ")}. Try again once you are online.`);
+    said.push(`Not saved yet: ${named(waiting)}. Try again once you are online.`);
   if (refused.length > 0)
     said.push(
-      `Your account could not keep: ${refused.join(", ")}, most likely because it is too large. Make it smaller or delete it, then sign out again.`,
+      `Your account could not keep: ${named(refused)}, most likely because it is too large. Make it smaller or delete it, then sign out again.`,
     );
   return said.join(" ");
+}
+
+// The account's screens (milestone 4 item 9): the header's state, the list's marks, and every
+// message of the sync queue (decision 0092), in the editor's own words.
+
+/** Under the account's menu, beside "Sign out": what signing out does to this browser (0092). */
+export const SIGN_OUT_NOTE =
+  "Signing out removes your account's documents from this browser. They stay in your account.";
+
+/** The sign-out warning's question, under `unsentNotice`. */
+export const SIGN_OUT_ANYWAY =
+  "Sign out anyway, and they are removed from this browser: what is not in your account is lost. Or stay signed in, and they stay here.";
+
+/** The header's quiet line of where the account's documents are, while signed in. */
+export const SYNC_SAVING = "Saving to your account…";
+export const SYNC_SAVED = "Saved to your account";
+export const SYNC_OFFLINE = "Offline: your changes are kept in this browser";
+export const SYNC_NOT_ALL = "Some documents could not be saved to your account";
+
+/** The first save's notice (decision 0091): its title, and what is sent and kept, in plain words. */
+export const SAVING_TITLE = "Saving to your account";
+export const SAVING_NOTICE =
+  "While you are signed in, your documents are saved to your account as well as in this browser, so you can open them on your other devices. What is sent: each document; and for a resume imported from .tex files, the files you uploaded and the editor's reading of them. Your account keeps them until you delete them. Nothing has been sent yet.";
+
+/** The first sign-in's question (decision 0092): documents only in this browser. */
+export const ADD_QUESTION = "Add them to your account?";
+
+/** What the question says of the documents it is about, and of what adding them sends. */
+export function addDetail(count: number): string {
+  const these = count === 1 ? "One document is" : `${count} documents are`;
+  return `${these} only in this browser. Adding them sends each one to your account, which keeps it until you delete it, with the files you uploaded for a resume imported from .tex files. “Not now” leaves them only in this browser; you can add each one later from the list.`;
+}
+
+/** The list's marks, one per document: where it is (`Where`, decision 0092). */
+export const PLACE_MARKS = {
+  "in-account": "In your account",
+  waiting: "Waiting to save to your account",
+  refused: "Could not be saved to your account",
+  "only-here": "Only in this browser",
+} as const;
+
+/** Why a document is marked refused (decision 0098), beside the mark. */
+export const REFUSED_WHY =
+  "It is most likely too large for your account to keep. It stays in this browser, and is tried again once you change it.";
+
+/** An open document the account changed, from another device (decision 0092), with a Reload. */
+export const CHANGED_ON_DEVICE = "This document was changed on another device.";
+
+/**
+ * This device's version of a document kept as a copy (decision 0092), titled `copy`: the account's
+ * version took its place (`conflict`), or the account no longer has it (`deleted`). `open` says it
+ * of the document open; otherwise it is named, by its title without the copy's ending.
+ */
+export function copiedNotice(
+  copy: string,
+  why: "conflict" | "deleted",
+  open: boolean,
+  suffix: string,
+): string {
+  const original = copy.endsWith(suffix) ? copy.slice(0, -suffix.length) : copy;
+  const subject = open ? "This document" : `“${original}”`;
+  const happened = why === "conflict" ? "was changed" : "was deleted";
+  return `${subject} ${happened} on another device. Your version here was kept as “${copy}”.`;
 }

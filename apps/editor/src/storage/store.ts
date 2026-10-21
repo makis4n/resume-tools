@@ -265,10 +265,14 @@ export interface StoredTemplate {
   import?: ImportRecord;
 }
 
-/** What this browser remembers of an account: that its person said "Not now" to adding documents. */
+/**
+ * What this browser remembers of an account: that its person said "Not now" to adding documents,
+ * and that they were told what saving to the account sends (decision 0091, milestone 4 item 9).
+ */
 interface AccountRow {
   id: string;
   notNow: boolean;
+  told?: boolean;
 }
 
 type Database = Dexie & {
@@ -1119,12 +1123,34 @@ export class DocumentStore {
 
   /** Remember that `account`'s person said "Not now" to adding this browser's documents. */
   async notNow(account: string): Promise<void> {
-    await this.db.accounts.put({ id: account, notNow: true });
+    await this.rememberOf(account, { notNow: true });
   }
 
   /** Whether `account`'s person said "Not now" on this browser. */
   async saidNotNow(account: string): Promise<boolean> {
     return (await this.db.accounts.get(account))?.notNow === true;
+  }
+
+  /**
+   * Remember that `account`'s person was told, in this browser, what saving to the account sends
+   * and keeps (decision 0091): the first save's notice is not shown to them here again.
+   */
+  async markTold(account: string): Promise<void> {
+    await this.rememberOf(account, { told: true });
+  }
+
+  /** Whether `account`'s person was told in this browser what saving to the account sends. */
+  async wasTold(account: string): Promise<boolean> {
+    return (await this.db.accounts.get(account))?.told === true;
+  }
+
+  /** Keep `what` of an account beside what this browser remembers of it already. */
+  private async rememberOf(account: string, what: Partial<Omit<AccountRow, "id">>): Promise<void> {
+    const accounts = this.db.accounts;
+    await this.db.transaction("rw", accounts, async () => {
+      const row = await accounts.get(account);
+      await accounts.put({ notNow: false, ...row, ...what, id: account });
+    });
   }
 
   /**

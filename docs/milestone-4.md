@@ -342,7 +342,7 @@ it; from item 7 on, Stage 2 uses item 4's client.
    when an integration test shows a `.tex` import's original and import files arrive on the second
    device byte for byte and the document opens there with its package, and the API test of decision
    0093 passes: B and a client with no session read nothing of A's.
-9. [ ] **The editor's account screens.** The account's state in the header; the list's three marks;
+9. [x] **The editor's account screens.** The account's state in the header; the list's three marks;
    the first save's notice of what is sent; the first sign-in's question; the sign-out warning; the
    conflict and changed-elsewhere messages; "cannot be opened until online". Done when DOM tests
    cover each message and none shows LaTeX or Supabase's text.
