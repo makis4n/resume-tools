@@ -1,13 +1,17 @@
-import { generateText } from "ai";
+import { generateText, jsonSchema, Output } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
+  ANTHROPIC_URL,
+  CLAUDE_MODEL,
+  claudeModel,
   DEFAULT_MODEL,
   GEMINI_MODEL,
   googleModel,
   MODEL_THINKING,
   soclaasModel,
   THINKING_SWITCHES,
+  takesTemperature,
   withoutThinking,
 } from "./providers";
 
@@ -152,6 +156,125 @@ describe("a model asked not to reason first", () => {
   test("is made by soclaasModel with the switch, and keeps the model's id", () => {
     const model = soclaasModel("invented-key", "qwen3.8:27b", { thinking: "template" });
     expect(model).toMatchObject({ modelId: "qwen3.8:27b", specificationVersion: "v4" });
+  });
+});
+
+/**
+ * What a call of a Claude model would send Anthropic's API, read by a stand-in for `fetch` that
+ * answers it in the Messages API's form, so that no provider is called: the request's body, as
+ * JSON. The call asks for an object of an invented schema at temperature 0, as the label route does.
+ */
+async function sentToClaude(
+  make: (fetch: typeof globalThis.fetch) => ReturnType<typeof claudeModel>,
+): Promise<Record<string, unknown>> {
+  let body: Record<string, unknown> = {};
+  const fetch = (async (_url: unknown, init?: { body?: unknown }) => {
+    body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    return new Response(
+      JSON.stringify({
+        id: "invented",
+        type: "message",
+        role: "assistant",
+        model: "invented",
+        content: [{ type: "text", text: '{"L0":"name"}' }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof globalThis.fetch;
+  await generateText({
+    model: make(fetch),
+    instructions: "Invented instructions.",
+    messages: [{ role: "user", content: "An invented request." }],
+    output: Output.object({
+      schema: jsonSchema({
+        type: "object",
+        properties: { L0: { type: "string", enum: ["name", "bullet"] } },
+        required: ["L0"],
+        additionalProperties: false,
+      }),
+      name: "roles",
+    }),
+    temperature: 0,
+    maxRetries: 0,
+  });
+  return body;
+}
+
+describe("Claude's model", () => {
+  test("is made by its id, Haiku 5.5 when none is given, with the key given", () => {
+    expect(CLAUDE_MODEL).toBe("claude-haiku-5-5");
+    expect(claudeModel("invented-key")).toMatchObject({
+      modelId: CLAUDE_MODEL,
+      specificationVersion: "v4",
+    });
+    expect(claudeModel("invented-key", "claude-sonnet-5-5")).toMatchObject({
+      modelId: "claude-sonnet-5-5",
+    });
+  });
+
+  test("asks for the schema as a structured output, with no temperature and no thinking", async () => {
+    const sent = await sentToClaude((fetch) => claudeModel("invented-key", undefined, { fetch }));
+    expect(sent).toMatchObject({
+      model: CLAUDE_MODEL,
+      thinking: { type: "disabled" },
+      output_config: { format: { type: "json_schema" } },
+    });
+    expect(sent).not.toHaveProperty("temperature");
+    expect(sent).not.toHaveProperty("tool_choice");
+  });
+
+  test("asks an older model that takes a temperature at the caller's, and no newer one", async () => {
+    for (const id of ["claude-haiku-4-5", "claude-sonnet-4-5-20250929", "claude-opus-4-6"]) {
+      expect(takesTemperature(id), id).toBe(true);
+      const sent = await sentToClaude((fetch) => claudeModel("invented-key", id, { fetch }));
+      expect(sent, id).toMatchObject({ temperature: 0 });
+    }
+    for (const id of ["claude-haiku-5-5", "claude-opus-4-7", "claude-opus-4-8", "claude-new-6"])
+      expect(takesTemperature(id), id).toBe(false);
+  });
+
+  test("asks Sonnet 5.5, which cannot turn its thinking off, with its lowest setting", async () => {
+    const sent = await sentToClaude((fetch) =>
+      claudeModel("invented-key", "claude-sonnet-5-5", { fetch }),
+    );
+    expect(sent).toMatchObject({ model: "claude-sonnet-5-5", thinking: { type: "between_tools" } });
+  });
+
+  test("is asked at Anthropic's API, whatever ANTHROPIC_BASE_URL says", async () => {
+    vi.stubEnv("ANTHROPIC_BASE_URL", "https://gateway.invalid/v1");
+    try {
+      let url = "";
+      await sentToClaude((fetch) =>
+        claudeModel("invented-key", undefined, {
+          fetch: (input, init) => {
+            url = String(input);
+            return fetch(input, init);
+          },
+        }),
+      );
+      expect(url).toBe(`${ANTHROPIC_URL}/messages`);
+      vi.stubEnv("ANTHROPIC_BASE_URL", "");
+      expect(() => claudeModel("invented-key")).not.toThrow();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  test("leaves the model to think when told to", async () => {
+    const sent = await sentToClaude((fetch) =>
+      claudeModel("invented-key", undefined, { thinking: true, fetch }),
+    );
+    expect(sent).not.toHaveProperty("thinking");
+  });
+
+  test("needs a key, and refuses one that is not one word without saying what it is", () => {
+    expect(() => claudeModel("")).toThrow("Claude's model needs an API key");
+    const message = thrownBy(() => claudeModel("invented key"));
+    expect(message).toBe("Claude's key is one line with no spaces");
+    expect(message).not.toContain("invented");
   });
 });
 

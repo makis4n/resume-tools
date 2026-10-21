@@ -2,6 +2,9 @@
 
 > Amended by 0063: the label route's KV namespace is renamed from NAMING_KV to LABEL_KV, under the
 > same label-rate: keys, with the naming route's deletion (the second pass's item 17).
+>
+> Amended by 0109: the route asks Claude (`claude-haiku-5-5`) first, with `ANTHROPIC_API_KEY`, and
+> SoCLaaS when Claude gives no answer within the same time.
 
 Date: 2026-10-04 · Status: accepted
 

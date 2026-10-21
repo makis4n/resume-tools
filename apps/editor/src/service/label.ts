@@ -53,6 +53,11 @@ export const LABEL_LIMITS: LabelLimits = {
 export interface LabelDeps {
   /** The model asked; with none, the route refuses with 503 and the page's rules read the PDF. */
   model: Exclude<LanguageModel, string> | undefined;
+  /**
+   * The model asked when the first gives no roles before its time runs out (decision 0109): SoCLaaS's
+   * behind Claude's. It has what is left of `limits.modelMs`, and is not asked once that is spent.
+   */
+  fallback?: Exclude<LanguageModel, string> | undefined;
   /** The client's address as the host reads it, which the rate limit keeps its buckets by. */
   address: string | undefined;
   /** Where each address's buckets are kept: counts and times, never a request's text. */
@@ -194,13 +199,25 @@ const tooMany = (retryAfter: number) =>
 /** A refusal for a request the rate limit could not count: try again in a second. */
 const uncounted = () => refuse(429, LABEL_SAYS.uncounted, undefined, { "Retry-After": "1" });
 
-/** A checked request asked of the model: its roles, or a refusal that says why there are none. */
+/**
+ * A checked request asked of the model: its roles, or a refusal that says why there are none. Where
+ * the model gives none before its time runs out and the route has a fallback, the fallback is asked
+ * the same, within the same time, and its answer, or its failure, is the reply.
+ */
 async function answer(
   lines: readonly Features[],
   model: Exclude<LanguageModel, string>,
   deps: LabelDeps,
 ): Promise<Response> {
-  const asked = await askRoles(lines, model, AbortSignal.timeout(deps.limits.modelMs));
+  const signal = AbortSignal.timeout(deps.limits.modelMs);
+  let asked = await askRoles(lines, model, signal);
+  if (!("roles" in asked) && asked.failure !== "timeout" && deps.fallback !== undefined) {
+    deps.log?.(
+      `The label route's model gave no roles (${asked.failure}): asking its fallback.`,
+      "warn",
+    );
+    asked = await askRoles(lines, deps.fallback, signal);
+  }
   if ("roles" in asked) return json(200, { roles: asked.roles });
   deps.log?.(`The label route's model gave no roles (${asked.failure}).`, "warn");
   if (asked.failure === "timeout") return refuse(504, LABEL_SAYS.timeout);

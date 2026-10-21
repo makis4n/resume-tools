@@ -191,6 +191,49 @@ describe("the label route", () => {
     expect(await late.json()).toEqual({ error: LABEL_SAYS.timeout });
   });
 
+  test("asks its fallback, within the same time, when the first model fails or answers wrong", async () => {
+    const busy = new MockLanguageModelV4({
+      doGenerate: async () => {
+        throw new APICallError({
+          message: "Invented rate limit",
+          url: "https://invalid.example/v1",
+          requestBodyValues: {},
+          statusCode: 429,
+        });
+      },
+    });
+    for (const first of [busy, answering("not JSON")]) {
+      const fallback = answering();
+      const { deps, logged } = depsOf({ model: first, fallback });
+      const response = await handleLabel(asked(), deps);
+      expect(response.status).toBe(200);
+      expect(LabelReply.parse(await response.json()).roles).toEqual(ROLES_OF_LINES);
+      expect(first.doGenerateCalls).toHaveLength(1);
+      expect(fallback.doGenerateCalls).toHaveLength(1);
+      expect(logged.join("\n")).toContain("asking its fallback");
+    }
+    // A fallback that fails too is the reply's cause.
+    const failed = await handleLabel(asked(), depsOf({ model: busy, fallback: busy }).deps);
+    expect(failed.status).toBe(502);
+  });
+
+  test("never asks its fallback when the first model answers, or has run out the time", async () => {
+    const fallback = idle();
+    expect((await handleLabel(asked(), depsOf({ fallback }).deps)).status).toBe(200);
+    const slow = new MockLanguageModelV4({
+      doGenerate: ({ abortSignal }) =>
+        new Promise<Result>((_, reject) => {
+          abortSignal?.addEventListener("abort", () => reject(abortSignal.reason));
+        }),
+    });
+    const late = await handleLabel(
+      asked(),
+      depsOf({ model: slow, fallback, limits: { ...LABEL_LIMITS, modelMs: 20 } }).deps,
+    );
+    expect(late.status).toBe(504);
+    expect(fallback.doGenerateCalls).toHaveLength(0);
+  });
+
   test("refuses with 503, and asks nothing, when it has no model", async () => {
     const response = await handleLabel(asked(), depsOf({ model: undefined }).deps);
     expect(response.status).toBe(503);
