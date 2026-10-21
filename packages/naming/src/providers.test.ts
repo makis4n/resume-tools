@@ -11,6 +11,7 @@ import {
   MODEL_THINKING,
   soclaasModel,
   THINKING_SWITCHES,
+  takesTemperature,
   withoutThinking,
 } from "./providers";
 
@@ -223,6 +224,16 @@ describe("Claude's model", () => {
     });
     expect(sent).not.toHaveProperty("temperature");
     expect(sent).not.toHaveProperty("tool_choice");
+  });
+
+  test("asks an older model that takes a temperature at the caller's, and no newer one", async () => {
+    for (const id of ["claude-haiku-4-5", "claude-sonnet-4-5-20250929", "claude-opus-4-6"]) {
+      expect(takesTemperature(id), id).toBe(true);
+      const sent = await sentToClaude((fetch) => claudeModel("invented-key", id, { fetch }));
+      expect(sent, id).toMatchObject({ temperature: 0 });
+    }
+    for (const id of ["claude-haiku-5-5", "claude-opus-4-7", "claude-opus-4-8", "claude-new-6"])
+      expect(takesTemperature(id), id).toBe(false);
   });
 
   test("asks Sonnet 5.5, which cannot turn its thinking off, with its lowest setting", async () => {

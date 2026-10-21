@@ -68,6 +68,15 @@ describe("the label route's models", () => {
     }
   });
 
+  test("refuse a variable that names the other provider's model", () => {
+    expect(() => labelModels({ PDF_LABEL_MODEL: "claude-haiku-5-5" })).toThrow(
+      "PDF_LABEL_MODEL names SoCLaaS's model: set a Claude model as PDF_LABEL_CLAUDE_MODEL",
+    );
+    expect(() => labelModels({ PDF_LABEL_CLAUDE_MODEL: DEFAULT_MODEL })).toThrow(
+      "PDF_LABEL_CLAUDE_MODEL names a Claude model",
+    );
+  });
+
   test("tell a Claude model by its id, for pdf-model", () => {
     expect(isClaude("claude-haiku-5-5")).toBe(true);
     expect(isClaude(DEFAULT_MODEL)).toBe(false);

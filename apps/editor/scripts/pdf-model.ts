@@ -4,18 +4,20 @@
  * labeller (`src/pdf/model-labeller.ts`), with a yes on record and its 15 s budget, posting to the
  * reading service's handler (`src/service/label.ts`) in this process, which asks the model through
  * the first pass's provider code, then the rules' filing step and the score against each PDF's
- * truth (decision 0051's definition of a field right). The model is `PDF_LABEL_MODEL`'s: a Claude
- * model for an id that starts `claude-`, with `ANTHROPIC_API_KEY` (decision 0109), and otherwise
- * SoCLaaS's, with `SOCLAAS_API_KEY`, `qwen3.8:27b` when it is unset.
+ * truth (decision 0051's definition of a field right). The model is `--model`'s: a Claude model
+ * for an id that starts `claude-`, with `ANTHROPIC_API_KEY` (decision 0109), and otherwise
+ * SoCLaaS's, with `SOCLAAS_API_KEY`, `qwen3.8:27b` when no id is given. It never reads the
+ * route's `PDF_LABEL_MODEL`, which names SoCLaaS's model alone.
  *
  *   SOCLAAS_API_KEY="$(security find-generic-password -s soclaas -w)" \
  *     pnpm --filter @resume-tools/editor pdf-model other|builtin|both [--passes <n>] [--record]
- *   ANTHROPIC_API_KEY="$(security find-generic-password -s anthropic -w)" PDF_LABEL_MODEL=claude-haiku-5-5 \
- *     pnpm --filter @resume-tools/editor pdf-model both [--thinking]
+ *   ANTHROPIC_API_KEY="$(security find-generic-password -s anthropic -w)" \
+ *     pnpm --filter @resume-tools/editor pdf-model both --model claude-haiku-5-5 [--thinking]
  *
  *   other     the eight invented resumes printed by other tools (`spike-pdf/fixtures/other/`)
  *   builtin   the nine PDFs the engine makes from the built-in templates and the curated samples
  *   --passes  how many passes over the set, a call a PDF each (3 by default)
+ *   --model   the model's id, a SoCLaaS id or a Claude id (`claude-...`); `qwen3.8:27b` by default
  *   --thinking  let a Claude model think before it answers, which the service never asks
  *   --record  write the model's replies on the other tools' PDFs, their raw content, the roles by
  *             line id and no text, to the suite's recorded replies
@@ -43,12 +45,7 @@ import { MODEL_BUDGET_MS, modelLabeller } from "../src/pdf/model-labeller.ts";
 import { readPdf } from "../src/pdf/node.ts";
 import { isPdfRefusal } from "../src/pdf/refusals.ts";
 import { scoreResume } from "../src/pdf/score.ts";
-import {
-  CLAUDE_KEY_VARIABLE,
-  isClaude,
-  KEY_VARIABLE,
-  LABEL_MODEL_VARIABLE,
-} from "../src/service/config.ts";
+import { CLAUDE_KEY_VARIABLE, isClaude, KEY_VARIABLE } from "../src/service/config.ts";
 import { handleLabel, LABEL_LIMITS } from "../src/service/label.ts";
 import { MemoryRateStore } from "../src/service/rate.ts";
 import { makeBuiltinPdfs } from "./spike-pdf/builtin.ts";
@@ -86,6 +83,7 @@ async function main() {
     allowPositionals: true,
     options: {
       passes: { type: "string" },
+      model: { type: "string" },
       record: { type: "boolean" },
       thinking: { type: "boolean" },
     },
@@ -94,7 +92,7 @@ async function main() {
   if (!["other", "builtin", "both"].includes(which))
     throw new Error("pdf-model takes other, builtin or both");
   const passes = Number(values.passes ?? 3);
-  const id = process.env[LABEL_MODEL_VARIABLE]?.trim() || DEFAULT_MODEL;
+  const id = values.model?.trim() || DEFAULT_MODEL;
   const claude = isClaude(id);
   const keyVariable = claude ? CLAUDE_KEY_VARIABLE : KEY_VARIABLE;
   const apiKey = process.env[keyVariable]?.trim() ?? "";

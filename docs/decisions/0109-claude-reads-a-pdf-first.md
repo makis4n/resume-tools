@@ -20,14 +20,23 @@ gateway's model was (decision 0059).
   runs out the time is not followed by a second, since the page's 15 s budget would be spent; the
   rules read the PDF, as before. With one key alone, its model is asked alone, so development
   and the launch can run on either.
-- **The model is `claude-haiku-5-5`**, `PDF_LABEL_CLAUDE_MODEL` picking another. It is asked with
-  its thinking off, as the gateway's model is, and with no temperature, which Claude's current
-  models refuse. Sonnet 5.5 cannot turn its thinking off, and is asked at its lowest setting.
+- **The model is `claude-haiku-5-5`**, `PDF_LABEL_CLAUDE_MODEL` picking another, which must be a
+  Claude id, as `PDF_LABEL_MODEL` must be SoCLaaS's: the route refuses to start otherwise. It is
+  asked with its thinking off, as the gateway's model is, and with no temperature, which Claude's
+  current models refuse; an older one that takes a temperature (the 3 and 4 families up to 4.6)
+  is asked at 0, as the gateway's is. Sonnet 5.5 cannot turn its thinking off, and is asked at its
+  lowest setting.
+- **Anthropic's API is named in the code**, so `ANTHROPIC_BASE_URL` in the environment, which the
+  provider would otherwise follow, never sends the lines or the key elsewhere.
+- **The dev server reads Claude's variables from the editor's `.env` files alone**, never the
+  shell's, so a Claude key exported for other tools does not turn Claude on, and an
+  `ANTHROPIC_API_KEY=` line turns it off. SoCLaaS's are read as before, the shell's over the files'.
 - **The provider is the AI SDK's** (`@ai-sdk/anthropic` 4.0.82, a new dependency of
   `packages/naming`), so the label route's one call (`askRoles`) stays the same for both models,
   and the schema goes to the Messages API as a structured output.
-- **`pdf-model` measures either**: the model `PDF_LABEL_MODEL` names, Claude's for an id that
-  starts `claude-`, with Claude's key; `--thinking` lets a Claude model think.
+- **`pdf-model` measures either**: the model its `--model` flag names, Claude's for an id that
+  starts `claude-`, with Claude's key, and `qwen3.8:27b` when none is given; `--thinking` lets a
+  Claude model think. It no longer reads `PDF_LABEL_MODEL`, the route's SoCLaaS id.
 - **The suite's recorded replies are Haiku's** (`src/pdf/fixtures/model-replies.json`), since it
   answers first.
 - **The privacy rule is unchanged** (decision 0047): the consent says a hosted language model reads
@@ -36,7 +45,7 @@ gateway's model was (decision 0059).
 
 ## Measured
 
-`pdf-model both --passes 3`, 21 October 2026, the key from the keychain, the invented sets alone:
+`pdf-model both --passes 3 --model <id>`, 21 October 2026, the key from the keychain, the invented sets alone:
 
 | Model | Other tools: fields right | Held out | Built-in: fields right | A call: median, slowest |
 |---|---|---|---|---|

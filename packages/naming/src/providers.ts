@@ -129,6 +129,14 @@ export function soclaasModel(
  */
 export const CLAUDE_MODEL = "claude-haiku-5-5";
 
+/**
+ * Whether a Claude model takes a temperature, as the AI SDK's provider has it (4.0.82): the 3 and
+ * 4 families up to 4.6 do; Opus 4.7 and 4.8, every model of the 5 family, and any id it does not
+ * know refuse one.
+ */
+export const takesTemperature = (id: string) =>
+  /^claude-(3[-.]|(opus|sonnet|haiku)-4(-[0-6])?(-\d{8})?$)/.test(id);
+
 /** Anthropic's API, which Claude's model is always asked at. */
 export const ANTHROPIC_URL = "https://api.anthropic.com/v1";
 
@@ -137,9 +145,10 @@ export const ANTHROPIC_URL = "https://api.anthropic.com/v1";
  * read. An answer's schema goes as the API's structured output, and every call asks the model not
  * to think first, as SoCLaaS's default is asked (decision 0044): Haiku with its thinking off,
  * Sonnet 5.5, which cannot turn it off, with its lowest setting, which the provider puts in its
- * place; `thinking: true` leaves the model to think as it decides. Neither takes a temperature,
- * so a caller's is dropped here, before the provider would warn of it on every call. `fetch` stands
- * in for the platform's, for a test that reads what would be sent.
+ * place; `thinking: true` leaves the model to think as it decides. A model that takes no
+ * temperature (`takesTemperature`) has its caller's dropped here, before the provider would warn
+ * of it on every call; an older one is asked at the caller's. `fetch` stands in for the
+ * platform's, for a test that reads what would be sent.
  */
 export function claudeModel(
   apiKey: string,
@@ -158,7 +167,7 @@ export function claudeModel(
     middleware: {
       transformParams: async ({ params }) => ({
         ...params,
-        temperature: undefined,
+        ...(takesTemperature(id) ? {} : { temperature: undefined }),
         ...(options.thinking === true
           ? {}
           : {

@@ -74,11 +74,17 @@ function keyOf(env: LabelEnv, variable: typeof KEY_VARIABLE | typeof CLAUDE_KEY_
  * alone: Claude's first where its key is set, and SoCLaaS's as the fallback, or as the one model
  * where Claude's key is not set; none where neither is, so that the route refuses and the page's
  * rules read the PDF. Throws, naming the variable and never its value, for an id that is not
- * plainly one, or a key that is not one line.
+ * plainly one or names the other provider's model, or a key that is not one line.
  */
 export function labelModels(env: LabelEnv): Pick<LabelDeps, "model" | "fallback"> {
   const claudeId = checkedId(CLAUDE_MODEL_VARIABLE, claudeModelIdOf(env));
   const soclaasId = checkedId(LABEL_MODEL_VARIABLE, labelModelIdOf(env));
+  if (!isClaude(claudeId))
+    throw new Error(`${CLAUDE_MODEL_VARIABLE} names a Claude model: an id that starts claude-`);
+  if (isClaude(soclaasId))
+    throw new Error(
+      `${LABEL_MODEL_VARIABLE} names SoCLaaS's model: set a Claude model as ${CLAUDE_MODEL_VARIABLE}`,
+    );
   const claudeKey = keyOf(env, CLAUDE_KEY_VARIABLE);
   const soclaasKey = keyOf(env, KEY_VARIABLE);
   const claude = claudeKey === undefined ? undefined : claudeModel(claudeKey, claudeId);
