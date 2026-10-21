@@ -7,7 +7,12 @@ import { PRIVACY_NOTE } from "../import/privacy";
 import { refusal } from "../import/refusal";
 import { LOCK_WHY } from "../import/report";
 import type { Summary, Where } from "../storage/store";
-import { DocumentList, type DocumentListProps, TEMPLATE_LINES } from "./DocumentList";
+import {
+  DocumentList,
+  type DocumentListProps,
+  IMPORTED_NAME,
+  TEMPLATE_LINES,
+} from "./DocumentList";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -254,5 +259,39 @@ describe("the document list's way in", () => {
     // Without accounts there are no marks.
     rendered();
     for (const mark of Object.values(PLACE_MARKS)) expect(host.textContent).not.toContain(mark);
+  });
+});
+
+describe("the document list's template names", () => {
+  it("calls an imported template it has no package for yet an imported resume, never its id", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const broughtIn: Summary = {
+      id: "c",
+      title: "Sable Invented",
+      template: "import-fedcba987654",
+      createdAt: 0,
+      updatedAt: NOW,
+    };
+    act(() =>
+      root.render(
+        <DocumentList
+          documents={[...DOCUMENTS, broughtIn]}
+          onOpen={() => {}}
+          onNew={() => {}}
+          onDelete={() => {}}
+          onImport={() => {}}
+          onCancelImport={() => {}}
+        />,
+      ),
+    );
+    const rowOf = (title: string) =>
+      [...host.querySelectorAll("li")].find((li) => li.textContent?.includes(title))?.textContent;
+    expect(rowOf("Sable Invented")).toContain(`${IMPORTED_NAME},`);
+    expect(host.textContent).not.toContain("import-fedcba987654");
+    expect(rowOf("Wren Invented")).toContain("Invented import,");
+    act(() => root.unmount());
+    host.remove();
   });
 });

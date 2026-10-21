@@ -35,6 +35,7 @@ import type { Report } from "../import/report";
 import type { PdfConsent } from "../pdf/consent";
 import type { Summary, Where } from "../storage/store";
 import { CURATED } from "../templates/curated";
+import { IMPORTED_PREFIX } from "../templates/package";
 import { ImportReport } from "./ImportReport";
 import { PdfReadingQuestion, PdfReadingSetting, PdfSendingNotice } from "./PdfReading";
 
@@ -131,11 +132,18 @@ export function editedAgo(then: number, now: number): string {
 }
 
 /**
- * A template's name: a curated one's, an imported one's as its package names it, or its id for
- * one this editor does not have, as a newer one may.
+ * A template's name: a curated one's, an imported one's as its package names it, "Imported resume"
+ * for an imported one whose package is not in this browser yet (one brought in from the account,
+ * whose files come when it is opened), or its id for one this editor does not have, as a newer one
+ * may.
  */
 const templateName = ({ template, templateName: imported }: Summary) =>
-  CURATED.get(template)?.package.name ?? imported ?? template;
+  CURATED.get(template)?.package.name ??
+  imported ??
+  (template.startsWith(IMPORTED_PREFIX) ? IMPORTED_NAME : template);
+
+/** What the list calls an imported template whose package it has not read. */
+export const IMPORTED_NAME = "Imported resume";
 
 /** What the chooser says of each curated template, beside its name: one line, plain English. */
 export const TEMPLATE_LINES: Readonly<Record<string, string>> = {
