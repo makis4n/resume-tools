@@ -23,9 +23,10 @@ a session token change the password.
 - **The database drops a password set before confirmation.** A trigger on `auth.users` empties the
   password when `email_confirmed_at` goes from none to a time. Only the address's owner can confirm
   it, so a password that survives was set after the address was proven.
-- **Sign-up answers alike.** `[auth.sms] enable_confirmations` is on, though phone sign-up is off:
-  with it off Auth confirms phones itself, and then answers a sign-up for an address with an
-  account with `user_already_exists` instead of the answer a new address gets.
+- **Sign-up answers with the same status.** `[auth.sms] enable_confirmations` is on, though phone
+  sign-up is off: with it off Auth confirms phones itself, and then refuses a sign-up for an address
+  with an account with `user_already_exists` (422) where a new address gets 200. With it on both get
+  200 and the same fields, and the editor shows both the same reply.
 - **An email not sent is said.** `over_email_send_rate_limit` reads "Too many emails were asked
   for…, so none was sent", for making an account and for a reset alike. Auth gives that code both
   when the project's email budget is spent and when one address asks again too soon, and the editor
@@ -42,9 +43,11 @@ a session token change the password.
   form. An account made by the email link alone, or left without a password, signs in by email link.
 - The trigger is the first migration that touches `auth.users`; it is tested with pgTAP and by the
   integration tests that replay both ways of taking over an address.
-- Two ways to tell which addresses have accounts remain, both in Auth's own answers, which no
-  setting changes: its sign-up answer for an address that was sent a sign-in or reset link carries
-  `recovery_sent_at`, and a second reset for a known address asked within `max_frequency` is
+- Three ways to tell which addresses have accounts remain, all in Auth's own answers, which no
+  setting changes: its sign-up answer for an existing account comes with no identities, an empty
+  role and no metadata, Auth's own obfuscation, where a new address's has one identity and the role
+  `authenticated`; its answer for an address that was sent a sign-in or reset link carries
+  `recovery_sent_at`; and a second reset for a known address asked within `max_frequency` is
   refused while one for an unknown address is not. The editor says so honestly rather than hide a
   failure. Milestone 5 checks whether the hosted Auth's version closes them.
 - The current password is still checked only by the editor. A stolen session token less than a day

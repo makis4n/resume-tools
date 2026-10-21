@@ -169,8 +169,9 @@ describe.skipIf(!url || !key || !mailpit)("signing in with a password on the loc
       body: JSON.stringify({ email: to, password }),
     });
     const body = (await response.json()) as Record<string, unknown>;
-    // Auth (2.197.0) still copies `recovery_sent_at` into its answer for an address that was sent
-    // a sign-in or reset link, which no setting turns off: a gap decision 0099 records.
+    // Only the status and the names of the fields are compared, not their values (see the test).
+    // Auth (2.197.0) also copies `recovery_sent_at` into its answer for an address that was sent a
+    // sign-in or reset link, which no setting turns off: a gap decision 0099 records.
     const keys = Object.keys(body).filter((name) => name !== "recovery_sent_at");
     return { status: response.status, keys: keys.sort() };
   }
@@ -214,7 +215,7 @@ describe.skipIf(!url || !key || !mailpit)("signing in with a password on the loc
     expect(await again.account.signOut()).toBeUndefined();
   });
 
-  it("gives an address that has an account the same reply as a new one, in the editor and the API", async () => {
+  it("gives an address that has an account the same reply as a new one in the editor, and the same status and fields in the API", async () => {
     await pause(1100);
     const { account } = await browser(memory());
     expect(await account.signUp(email)).toBeUndefined();
@@ -222,7 +223,9 @@ describe.skipIf(!url || !key || !mailpit)("signing in with a password on the loc
     await linkIn(SIGN_IN, email);
     await linkIn(CONFIRM, fresh);
 
-    // Auth's own answer to a sign-up does not tell an address with an account from a new one.
+    // Auth's own answer to a sign-up has the same status and fields for an address with an account
+    // as for a new one. Its values still differ (an existing account's comes with no identities and
+    // an empty role, Auth's own obfuscation), a gap no setting closes, which decision 0099 records.
     const known = await signUpAnswer(email, "invented-other-pass");
     const unknown = await signUpAnswer(stranger, "invented-other-pass");
     expect(known.status).toBe(200);
