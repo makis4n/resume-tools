@@ -233,7 +233,11 @@ double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
 enable_confirmations = true
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
-secure_password_change = false
+# On (decision 0099): Auth refuses a new password from a session more than a day old unless it
+# brings a code emailed to the account, so a stolen old token cannot change it. The editor's own
+# change signs in afresh with the current password first (this file cannot turn on Auth's own
+# current-password check), and a reset or confirmation link's session is new, so neither needs one.
+secure_password_change = true
 # Controls the minimum amount of time that must pass before sending another signup confirmation or password reset email.
 max_frequency = "1s"
 # Number of characters used in the email OTP.
@@ -251,9 +255,10 @@ otp_expiry = 3600
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
 
-# The editor's own emails (milestone 4 item 4, decision 0094): plain HTML that says what the link
-# does and that it can be ignored. A new address's first link is a confirmation, an account's
-# later ones a magic link. `stack.sh restart` after changing either.
+# The editor's own emails (milestone 4 items 4 and 5, decisions 0094 and 0099): plain HTML that says
+# what the link does and that it can be ignored. A new address's first link, by email link or by
+# "Make an account", is a confirmation; an account's later sign-in links a magic link; "Forgot your
+# password?" a recovery link. `stack.sh restart` after changing any of them.
 [auth.email.template.magic_link]
 subject = "Your link to sign in to the resume editor"
 content_path = "./supabase/templates/magic-link.html"
@@ -261,6 +266,10 @@ content_path = "./supabase/templates/magic-link.html"
 [auth.email.template.confirmation]
 subject = "Confirm your email for the resume editor"
 content_path = "./supabase/templates/confirmation.html"
+
+[auth.email.template.recovery]
+subject = "Set a new password for the resume editor"
+content_path = "./supabase/templates/recovery.html"
 
 # Uncomment to customize email template
 # [auth.email.template.invite]
@@ -277,7 +286,10 @@ content_path = "./supabase/templates/confirmation.html"
 # Allow/disallow new user signups via SMS to your project.
 enable_signup = false
 # If enabled, users need to confirm their phone number before signing in.
-enable_confirmations = false
+# On, though phone sign-up is off (decision 0099): with it off Auth confirms phones itself, and then
+# answers a sign-up for an address that has an account with `user_already_exists` rather than as it
+# answers a new one, which tells anyone with the public key which addresses have accounts.
+enable_confirmations = true
 # Template for sending OTP to users
 template = "Your code is {{ .Code }}"
 # Controls the minimum amount of time that must pass before sending another sms otp.

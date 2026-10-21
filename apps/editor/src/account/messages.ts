@@ -25,8 +25,12 @@ export const LINK_FAILED = "That link could not sign you in. Send a new one.";
 /** The account cannot sign in at all. */
 export const ACCOUNT_BLOCKED = "This account cannot sign in.";
 
-/** Too many links asked for in a short time. */
-export const TOO_MANY = "Too many sign-in emails were asked for. Wait a minute, then try again.";
+/**
+ * An email that could not be sent for now: too many asked for in a short time, by this address or
+ * by everyone. Never read as sent (decision 0099).
+ */
+export const TOO_MANY =
+  "Too many emails were asked for in a short time, so none was sent. Wait a minute, then try again.";
 
 /** The address was refused as it is written. */
 export const BAD_ADDRESS = "That email address does not look right. Check it and try again.";
@@ -44,8 +48,74 @@ export const UNREACHABLE =
 /** Signing out did not finish, and the session is still here. */
 export const NOT_SIGNED_OUT = "You could not be signed out. Try again.";
 
-/** What the person was doing when the error came. */
-export type Moment = "send" | "link" | "signOut";
+/** The password rule, stated before the person submits one (decision 0094). */
+export const PASSWORD_HINT = "At least 8 characters.";
+
+/**
+ * A password that breaks the rule, refused by the editor before any request or by the server. The
+ * upper bound is 72 bytes (`MAX_BYTES`), which the second sentence says in plain words.
+ */
+export const PASSWORD_RULE =
+  "A password needs at least 8 characters and at most 72. Accented letters, emoji and other symbols can count as more than one.";
+
+/**
+ * A failed sign-in with a password: one message for a wrong email, a wrong password, and an
+ * address with no account, so it never says which was wrong.
+ */
+export const WRONG_PASSWORD =
+  "That email and password do not match an account. Check them and try again, or reset your password.";
+
+/**
+ * The right password for an address not yet confirmed. Supabase says so only once the password is
+ * right (a wrong one gets `invalid_credentials`, as any other), so it tells nothing to someone
+ * without the password. The email link confirms the address too.
+ */
+export const CONFIRM_FIRST =
+  "Confirm your email first: open the link we sent when you made the account. If it has expired, use “Email me a link” to get a new one.";
+
+/** Signing in with a password failed for another reason. */
+export const SIGN_IN_FAILED = "You could not be signed in. Try again.";
+
+/** Too many sign-ins or password changes tried in a short time. */
+export const TOO_MANY_TRIES = "Too many tries in a short time. Wait a few minutes, then try again.";
+
+/** Signing up failed for a reason that is not the address or the password. */
+export const NOT_MADE = "Your account could not be made. Try again.";
+
+/** The current password, asked for before changing it, was wrong; nothing changed. */
+export const WRONG_CURRENT = "That is not your current password. Your password has not changed.";
+
+/** The new password is the one the account has already. */
+export const SAME_PASSWORD = "That is already your password. Choose a different one.";
+
+/**
+ * The session is more than a day old, and Auth asks for an emailed code before setting a password
+ * from it (`secure_password_change`, decision 0099); a new link makes a new session.
+ */
+export const SIGNED_IN_TOO_LONG_AGO =
+  "You signed in too long ago to set a password this way. Choose “Not now”, then “Change password”, and ask for a link to set one.";
+
+/** The session ended before the password could be set. */
+export const SESSION_ENDED =
+  "You are no longer signed in, so the password was not changed. Sign in again, or ask for a new reset link.";
+
+/** The password could not be set for another reason. */
+export const NOT_CHANGED = "Your password could not be changed. Try again.";
+
+/**
+ * What the person was doing when the error came: sending a link, coming back from one, signing
+ * out, signing up, signing in with a password, asking for a reset link, setting a new password
+ * (after a reset or while signed in), and checking the current password before changing it.
+ */
+export type Moment =
+  | "send"
+  | "link"
+  | "signOut"
+  | "signUp"
+  | "signIn"
+  | "reset"
+  | "password"
+  | "current";
 
 /**
  * The error's code, as the editor reads it: Supabase's `code`, or a callback's error code, or
@@ -58,6 +128,8 @@ export function codeOf(error: unknown): string | undefined {
   if (typeof code === "string" && code !== "") return code;
   // The client's own wrapper for a request that did not reach the server, and fetch's own failure.
   if (name === "AuthRetryableFetchError" || error instanceof TypeError) return "network";
+  // The client's own error for a call that needs a session when none is kept.
+  if (name === "AuthSessionMissingError") return "session_missing";
   return undefined;
 }
 
@@ -66,6 +138,8 @@ export function messageFor(error: unknown, moment: Moment): string {
   const code = codeOf(error);
   if (code === "network") return UNREACHABLE;
   if (code === "user_banned") return ACCOUNT_BLOCKED;
+  const typed = moment === "signIn" || moment === "password" || moment === "current";
+  if (typed && code === "over_request_rate_limit") return TOO_MANY_TRIES;
   if (code === "over_email_send_rate_limit" || code === "over_request_rate_limit") return TOO_MANY;
   switch (moment) {
     case "send":
@@ -97,5 +171,71 @@ export function messageFor(error: unknown, moment: Moment): string {
       }
     case "signOut":
       return NOT_SIGNED_OUT;
+    // Making an account sends only the address (decision 0099), so a failed validation is it.
+    case "signUp":
+      switch (code) {
+        case "email_address_invalid":
+        case "validation_failed":
+          return BAD_ADDRESS;
+        case "email_address_not_authorized":
+        case "email_provider_disabled":
+        case "otp_disabled":
+        case "signup_disabled":
+          return EMAIL_OFF;
+        default:
+          return NOT_MADE;
+      }
+    case "signIn":
+      switch (code) {
+        case "invalid_credentials":
+        case "validation_failed":
+        case "user_not_found":
+          return WRONG_PASSWORD;
+        case "email_not_confirmed":
+          return CONFIRM_FIRST;
+        case "email_provider_disabled":
+          return EMAIL_OFF;
+        default:
+          return SIGN_IN_FAILED;
+      }
+    case "reset":
+      switch (code) {
+        case "email_address_invalid":
+        case "validation_failed":
+          return BAD_ADDRESS;
+        case "email_address_not_authorized":
+        case "email_provider_disabled":
+          return EMAIL_OFF;
+        default:
+          return NOT_SENT;
+      }
+    case "password":
+      switch (code) {
+        // Only the password is sent, so a failed validation is the password: over 72 characters.
+        case "weak_password":
+        case "validation_failed":
+          return PASSWORD_RULE;
+        case "same_password":
+          return SAME_PASSWORD;
+        case "reauthentication_needed":
+          return SIGNED_IN_TOO_LONG_AGO;
+        case "session_missing":
+        case "session_not_found":
+        case "session_expired":
+        case "refresh_token_not_found":
+        case "refresh_token_already_used":
+        case "no_authorization":
+        case "bad_jwt":
+          return SESSION_ENDED;
+        default:
+          return NOT_CHANGED;
+      }
+    case "current":
+      switch (code) {
+        case "invalid_credentials":
+          return WRONG_CURRENT;
+        default:
+          return NOT_CHANGED;
+      }
   }
 }

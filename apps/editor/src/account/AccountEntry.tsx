@@ -1,10 +1,13 @@
 /**
- * The account's entry in the editor's header (milestone 4 item 4): "Sign in", which opens the
- * sign-in panel, or, signed in, the account's email and "Sign out". It shows only when the editor
- * has accounts (`accountsConfigured`); item 9 dresses the account's state further.
+ * The account's entry in the editor's header (milestone 4 items 4 and 5): "Sign in", which opens
+ * the sign-in panel, or, signed in, the account's email, "Change password" and "Sign out". A reset
+ * link opens the recovery state, where the person sets a new password, and the link of "Make an
+ * account" opens it to choose the first one (decision 0099). It shows only when the
+ * editor has accounts (`accountsConfigured`); item 9 dresses the account's state further.
  */
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { Account } from "./account";
+import { ChangePasswordPanel, PASSWORD_SET, RecoveryPanel } from "./NewPassword";
 import { SignInPanel } from "./SignInPanel";
 
 const HEADER = {
@@ -20,6 +23,8 @@ export function AccountEntry({ account }: { account: Account }) {
   const [opened, setOpened] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [problem, setProblem] = useState<string>();
+  const [changing, setChanging] = useState(false);
+  const [said, setSaid] = useState<string>();
 
   // The address and the storage are read once the page is up: a link's callback or a stored
   // session loads the client, and with neither nothing is loaded.
@@ -38,6 +43,8 @@ export function AccountEntry({ account }: { account: Account }) {
   }, [account, panel]);
 
   const signOut = async () => {
+    setChanging(false);
+    setSaid(undefined);
     setSigningOut(true);
     setProblem(await account.signOut());
     setSigningOut(false);
@@ -48,9 +55,20 @@ export function AccountEntry({ account }: { account: Account }) {
     <header>
       <div style={HEADER}>
         {state.status === "checking" && <span role="status">Checking your account…</span>}
-        {state.status === "signed-in" && (
+        {(state.status === "signed-in" || state.status === "recovering") && (
           <>
             <span>Signed in as {state.email}</span>
+            {state.status === "signed-in" && !changing && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSaid(undefined);
+                  setChanging(true);
+                }}
+              >
+                Change password
+              </button>
+            )}
             <button type="button" onClick={() => void signOut()} disabled={signingOut}>
               Sign out
             </button>
@@ -69,10 +87,34 @@ export function AccountEntry({ account }: { account: Account }) {
         )}
       </div>
       {problem && <p role="alert">{problem}</p>}
+      {said && <p role="status">{said}</p>}
+      {state.status === "recovering" && (
+        <RecoveryPanel
+          email={state.email ?? ""}
+          first={state.first === true}
+          onSet={async (password) => {
+            const failed = await account.setPassword(password);
+            if (failed === undefined) setSaid(PASSWORD_SET);
+            return failed;
+          }}
+          onLater={() => account.endRecovery()}
+        />
+      )}
+      {state.status === "signed-in" && changing && (
+        <ChangePasswordPanel
+          email={state.email ?? ""}
+          onChange={(current, next) => account.changePassword(current, next)}
+          onSendReset={(email) => account.sendReset(email)}
+          onClose={() => setChanging(false)}
+        />
+      )}
       {panel && (
         <SignInPanel
           {...(state.notice === undefined ? {} : { notice: state.notice })}
           onSendLink={(email) => account.sendLink(email)}
+          onSignIn={(email, password) => account.signIn(email, password)}
+          onSignUp={(email) => account.signUp(email)}
+          onSendReset={(email) => account.sendReset(email)}
           onClose={() => {
             setOpened(false);
             account.dismiss();

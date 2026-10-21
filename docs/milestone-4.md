@@ -318,7 +318,7 @@ it; from item 7 on, Stage 2 uses item 4's client.
    in the editor's header and a panel with the email link. Done when a DOM test with the fake shows
    that a signed-out editor makes no request and loads no client, and an integration test signs in
    by email link read from Mailpit and signs out.
-5. [ ] **Email and password.** Sign up with confirmation, sign in, the one message for a failed
+5. [x] **Email and password.** Sign up with confirmation, sign in, the one message for a failed
    sign-in, the 8-character minimum in plain words, "Forgot your password?" and the recovery state,
    and changing a password with the current one. Done when integration tests cover sign up, confirm
    and sign in; a short password refused; a wrong password; reset through Mailpit for an existing

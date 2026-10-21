@@ -152,6 +152,18 @@ describe("the sign-in callback in the address", () => {
     expect(flowIdOf(null)).toBeUndefined();
   });
 
+  it("reads whether the link asks for a password once signed in, from making an account", () => {
+    expect(callbackOf("http://localhost:5173/?then=password&code=c")).toEqual({
+      code: "c",
+      choosePassword: true,
+    });
+    expect(callbackOf("http://localhost:5173/?then=other&code=c")).toEqual({ code: "c" });
+    expect(callbackOf("http://localhost:5173/?then=password")).toBeUndefined();
+    expect(withoutCallback("http://localhost:5173/?then=password&code=c&sb_flow_id=f")).toBe(
+      "http://localhost:5173/",
+    );
+  });
+
   it("reads an error's code, from the query or the fragment, before any code", () => {
     expect(
       callbackOf(
