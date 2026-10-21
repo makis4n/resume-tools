@@ -1,7 +1,8 @@
 import { generateText, jsonSchema, Output } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
+  ANTHROPIC_URL,
   CLAUDE_MODEL,
   claudeModel,
   DEFAULT_MODEL,
@@ -229,6 +230,26 @@ describe("Claude's model", () => {
       claudeModel("invented-key", "claude-sonnet-5-5", { fetch }),
     );
     expect(sent).toMatchObject({ model: "claude-sonnet-5-5", thinking: { type: "between_tools" } });
+  });
+
+  test("is asked at Anthropic's API, whatever ANTHROPIC_BASE_URL says", async () => {
+    vi.stubEnv("ANTHROPIC_BASE_URL", "https://gateway.invalid/v1");
+    try {
+      let url = "";
+      await sentToClaude((fetch) =>
+        claudeModel("invented-key", undefined, {
+          fetch: (input, init) => {
+            url = String(input);
+            return fetch(input, init);
+          },
+        }),
+      );
+      expect(url).toBe(`${ANTHROPIC_URL}/messages`);
+      vi.stubEnv("ANTHROPIC_BASE_URL", "");
+      expect(() => claudeModel("invented-key")).not.toThrow();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   test("leaves the model to think when told to", async () => {

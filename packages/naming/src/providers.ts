@@ -129,6 +129,9 @@ export function soclaasModel(
  */
 export const CLAUDE_MODEL = "claude-haiku-5-5";
 
+/** Anthropic's API, which Claude's model is always asked at. */
+export const ANTHROPIC_URL = "https://api.anthropic.com/v1";
+
 /**
  * Claude's model of the id given, over Anthropic's Messages API, with `apiKey`, the key the caller
  * read. An answer's schema goes as the API's structured output, and every call asks the model not
@@ -144,6 +147,9 @@ export function claudeModel(
   options: { thinking?: boolean; fetch?: typeof fetch } = {},
 ): Exclude<LanguageModel, string> {
   const model = createAnthropic({
+    // Named here, since the provider would otherwise read ANTHROPIC_BASE_URL from the environment
+    // and send the lines and the key wherever it pointed.
+    baseURL: ANTHROPIC_URL,
     apiKey: keyOf(apiKey, "Claude"),
     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
   })(id);
