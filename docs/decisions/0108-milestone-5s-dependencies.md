@@ -22,12 +22,14 @@ request that adds this record.
   No wrapper library is added for it.
 - **The AWS CLI**, which GitHub's runners carry, uploads the engine's files to R2 through R2's S3
   API. It is not added to the repository.
-- **The provider's code.** The school's gateway, the owner's choice for launch (decision 0103),
-  comes through `@ai-sdk/openai-compatible`, already a dependency of `packages/naming`, so nothing
-  is added for it.
+- **The providers' code.** Claude first and the school's gateway behind it, the owner's choice for
+  launch (decisions 0103 and 0109), come through `@ai-sdk/anthropic`, which decision 0109 adds to
+  `packages/naming`, and `@ai-sdk/openai-compatible`, already a dependency there, so this milestone
+  adds nothing for them.
 - **Services, not packages**, each in an account the owner opens: the domain, at Cloudflare's
   registrar; Cloudflare's Workers, R2, Durable Objects and Turnstile; the hosted Supabase project;
-  the mail provider; Google's OAuth client; and a launch key for the school's gateway.
+  the mail provider; Google's OAuth client; and launch keys for Anthropic's API and the school's
+  gateway.
 - **Already dependencies**: `@supabase/supabase-js`; the `supabase` CLI, whose `link`, `db push`,
   `config push` and `test db --linked` the `database` workflow and item 14 use;
   `@cloudflare/workers-types`; the AI SDK.

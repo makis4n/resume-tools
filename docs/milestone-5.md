@@ -15,8 +15,9 @@ on originals." It sets no done-check. This plan proposes one:
 > A person who has never seen the editor opens its address in a current desktop browser, makes a
 > resume from a built-in template or imports their own, downloads its PDF, saves it to a new
 > account, opens it on a second device, and deletes the account, leaving nothing of it behind. A
-> PDF's lines are read by the school's gateway behind a bot check, and the editor's own service
-> keeps none of their text. The import's quality number is published where both owners read it.
+> PDF's lines are read by Claude, or by the school's gateway when Claude gives no answer, behind a
+> bot check, and the editor's own service keeps none of their text. The import's quality number is
+> published where both owners read it.
 
 Unlike milestone 4's plan, this one was written before the owner settled anything. Every choice in
 it is a proposal. The ones that spend money, need an account only the owner can open, or speak for
@@ -37,12 +38,15 @@ say so.
    app's name on its consent screen only after brand verification, which needs a home page and a
    privacy page on a domain the owner has verified in Google's Search Console.
 2. **Who reads a PDF's lines at launch**, the plan's open question (sections 6.4 and 11).
-   **Settled by the owner on 21 October 2026: SoCLaaS, the school's gateway**, with `qwen3.8:27b`,
-   the model the reading was measured with, 93.4 to 95.7% of fields right on invented resumes from
-   other tools (decision 0064). Its code is written and runs in development, and it bills nothing.
-   The owner set aside the question of what the gateway keeps, and the school's leave that
-   section 6.4 asks for, so neither waits for launch. Workers AI and the paid services this
-   plan's first draft weighed are not used.
+   **Settled by the owner on 21 October 2026: Claude first, the school's gateway behind it**
+   (decision 0109). Anthropic's Claude Haiku 5.5 reads a PDF's lines, and SoCLaaS, the school's
+   gateway, with `qwen3.8:27b`, reads them when Claude gives no answer. Haiku read 95.7% of fields
+   right on invented resumes from other tools, as `qwen3.8:27b` did (decisions 0064 and 0109), at
+   about 2 s a call; it is paid from the owner's $200 of Anthropic API credit, well under a tenth
+   of a cent a PDF, and the gateway bills nothing. Both run in development. The owner chose the
+   gateway alone first, the same day, and put Claude in front of it to spend the credit. The owner
+   set aside what either provider keeps, and the school's leave that section 6.4 asks for, so
+   neither waits for launch. Workers AI is not used.
 3. **Supabase's plan.** Recommended: Free while the milestone builds, Pro ($25 a month, its spend
    cap on) from launch day. A Free project pauses after a week of low activity and signs nobody in
    until the owner resumes it; it keeps no backups, so one mistake loses people's documents for
@@ -71,7 +75,8 @@ What it costs on the recommended choices:
 |---|---|---|
 | The domain | about $10 a year | at once |
 | Cloudflare: the Worker, R2, the cache, Turnstile | nothing | past 100,000 requests a day to the reading route, or 10 GB of files |
-| SoCLaaS, the school's gateway | nothing | never; the launch key's own limits cap a day's reading |
+| Anthropic's API, Claude Haiku 5.5 | well under a tenth of a cent a PDF, from the owner's $200 of credit | the credit is prepaid, with auto-reload off: once it is spent, the gateway reads alone |
+| SoCLaaS, the school's gateway, behind Claude | nothing | never; the launch key's own limits cap a day's reading |
 | Supabase | nothing while building | $25 a month from launch day, on Pro |
 | Resend | nothing up to 100 emails a day | $20 a month past them |
 | Google's sign-in | nothing | never |
@@ -92,11 +97,13 @@ What it costs on the recommended choices:
   to "milestone 5's CDN and engine build" to bring under the 30 MB target.
 - **The route that reads a PDF** is a Pages Function, `apps/editor/functions/v1/label.ts`, over a
   handler tied to no host (`src/service/label.ts`, decision 0056). It has never been deployed. It
-  asks SoCLaaS, the school's gateway, for `qwen3.8:27b` (decisions 0036 and 0044); Gemini's
-  provider code is written and unused. It limits each address to 10 requests a minute, 100 a day
-  and 2 million prompt characters a day, in KV, and refuses what it cannot count; it stops the
-  model at 14 s so the page's 15 s budget holds; it keeps no text and logs fixed lines alone.
-  Without a key it answers 503 and the page's rules read the PDF.
+  asks SoCLaaS, the school's gateway, for `qwen3.8:27b` (decisions 0036 and 0044); Gemini's provider
+  code is written and unused. Decision 0109 (pull request #151) puts Claude Haiku 5.5 in front of
+  the gateway, which it asks when Claude gives no answer within the same 14 s. The route limits each
+  address to 10 requests a minute, 100 a day and 2 million prompt characters a day, in KV, and
+  refuses what it cannot count; it stops the model at 14 s so the page's 15 s budget holds; it keeps
+  no text and logs fixed lines alone. Without a key it answers 503 and the page's rules read the
+  PDF.
 - **Accounts** run against the local Supabase stack (decision 0089): sign-in by email link and by
   email and password (decisions 0094 and 0099), the `documents` table and the private `originals`
   bucket that only their owner reaches (decision 0093), and sync as a queue of whole documents
@@ -139,12 +146,13 @@ What it costs on the recommended choices:
   and past them the route refuses everything it cannot count (decision 0056,
   `functions/README.md`). A SQLite-backed Durable Object on the free plan, with the counting done
   inside it, is the "stronger limit" decision 0028 asked this milestone for (decision 0103).
-- **The provider at launch is settled: the school's gateway.** Sections 6.4 and 11 leave it open
-  between the school's gateway, with its leave, and a paid service whose terms "rule out training
-  on what it is sent". The owner chose the gateway on 21 October 2026 and set aside both the
-  school's leave and the question of what the gateway keeps, so no leave is sought and the consent
-  goes on promising only what the editor's own service does (`src/pdf/consent.ts`, decision
-  0103).
+- **The providers at launch are settled: Claude first, the school's gateway behind it.** Sections
+  6.4 and 11 leave it open between the school's gateway, with its leave, and a paid service whose
+  terms "rule out training on what it is sent". The owner chose the gateway on 21 October 2026,
+  then, the same day, put Claude in front of it to spend $200 of Anthropic API credit (decision
+  0109). The school's leave and what either provider keeps are set aside, so no leave is sought
+  and the consent goes on promising only what the editor's own service does
+  (`src/pdf/consent.ts`, decision 0103).
 - **The engine stays BusyTeX's release**, if the owner agrees (question 6). Section 8.1's TeX
   engines row says the engines are built "from TeX Live sources", and milestone 2 left that build
   to this milestone.
@@ -219,7 +227,8 @@ Decision 0102, which extends decision 0029.
   Workers and R2, R2's access keys, Supabase's access token and database password, the SMTP
   password, Google's client secret, the Turnstile secret the account service checks with), and in
   the Worker for its own (the Turnstile secret the route checks with, the key that hashes
-  addresses, and the school's gateway's launch key). None is in the repository, and none has the
+  addresses, and the launch keys for Claude and the school's gateway). None is in the repository,
+  and none has the
   `VITE_` prefix.
 - **Undoing a deploy**: Cloudflare keeps the Worker's versions, and `wrangler rollback` or its
   dashboard returns to one. A bad migration is undone by a new one.
@@ -233,17 +242,20 @@ Decision 0102, which extends decision 0029.
 
 Decision 0103, which extends decisions 0028, 0047 and 0056.
 
-- **The provider is SoCLaaS**, the school's gateway, with `qwen3.8:27b` asked with its thinking
-  off, as in development (decisions 0036 and 0044). The owner chose it on 21 October 2026 and set
-  aside the question of what the gateway keeps. It is the model the reading was measured with, its
-  code is written, and it bills nothing. The owner also set aside the school's leave that section
-  6.4 asks for. The launch has a key of its own, so development never spends the launch's
-  allowance.
-- **Measured from where it will run** (item 5). The reading's accuracy on this gateway is measured
-  already (decision 0064); what launch changes is the caller. Item 5 checks that the gateway
-  answers the Worker from Cloudflare's network, times the invented sets through it against the
-  15 s budget, and reads the launch key's limits. If the gateway does not answer a Worker, the
-  rules read every PDF until the owner decides again.
+- **Claude reads first, the school's gateway behind it** (decision 0109): Claude Haiku 5.5, and
+  SoCLaaS's `qwen3.8:27b` when Claude fails or answers in a wrong form within the same 14 s, both
+  with their thinking off, as in development. The owner chose this on 21 October 2026 and set
+  aside what either provider keeps. Both read 95.7% of fields right on the invented resumes from
+  other tools; Haiku is paid from the owner's $200 of Anthropic API credit, and the gateway bills
+  nothing. The owner also set aside the school's leave that section 6.4 asks for. The launch has
+  keys of its own, so development never spends the launch's allowance, and the Claude credit is
+  prepaid with auto-reload off, so once it is spent the gateway reads alone.
+- **Measured from where it will run** (item 5). The reading's accuracy is measured already
+  (decisions 0064 and 0109); what launch changes is the caller. Item 5 checks that Claude and the
+  gateway each answer the Worker from Cloudflare's network, times the invented sets through each
+  against the 15 s budget, a fallback's included, and reads the launch keys' limits. If one
+  provider does not answer a Worker, the other reads alone; if neither does, the rules read every
+  PDF until the owner decides again.
 - **The bot check comes first.** A Turnstile widget of the route's own, rendered when the person
   has said yes and a PDF is being sent; its script is fetched then and not before. Its token, good
   once and for five minutes, goes with the request. The route checks it with Turnstile's
@@ -252,9 +264,10 @@ Decision 0103, which extends decisions 0028, 0047 and 0056.
   as a timeout is, and the review says the rules read it.
 - **The limits** of decision 0056 stay: 10 requests a minute, 100 a day and 2 million prompt
   characters a day per address, IPv6 by its /48. One more is added: a ceiling for everyone each
-  UTC day, set under the launch key's own limits (decision 0036 names 90 requests a minute, and
-  reference prices of $80 a day and $800 a month), past which the rules read every PDF until the
-  day ends. The ceiling keeps one busy day from spending the key's whole allowance.
+  UTC day, set under the gateway's launch key's own limits (decision 0036 names 90 requests a
+  minute, and reference prices of $80 a day and $800 a month), past which the rules read every PDF
+  until the day ends. The ceiling keeps one busy day from spending the key's whole allowance, or
+  much of the Claude credit.
 - **A Durable Object counts**, in place of KV: a SQLite-backed class, one object for each
   address's buckets and one for the day's ceiling. The counting moves inside it: one call checks
   and takes from every bucket at once, where `RateStore`'s separate reads and writes let two
@@ -264,11 +277,12 @@ Decision 0103, which extends decisions 0028, 0047 and 0056.
 - **Nothing kept by the route**: no cache and fixed log lines, as now, and the Worker's
   observability off, with no tail consumer and no Logpush, so not even those lines are stored.
   They show only in a live tail someone is watching.
-- **The consent and the privacy page name the school's gateway** as who reads the text, in words
-  the owner approves (item 6). As today, they promise only what the editor's own service does: it
-  keeps none of the text.
-- **The school's gateway is the development model and the launch's**, so `pdf-model` and the
-  route's `labelModel` stay as they are.
+- **The consent and the privacy page name Anthropic and the school's gateway** as who reads the
+  text, Anthropic first and the gateway when Claude gives no answer, so a request that falls back,
+  which reaches both, is covered, in words the owner approves (item 6). As today, they promise only
+  what the editor's own service does: it keeps none of the text.
+- **Development and the launch ask the same models in the same order**, so `pdf-model` and the
+  route's `labelModels` (decision 0109) stay as they are.
 - **No model is called in CI**, and no corpus resume is ever sent to one, as now.
 
 ## Accounts online
@@ -431,13 +445,13 @@ The plan's word, made a list. Each entry says how it is checked.
   leaves it. Run by hand through `POST /v1/analyze` on the checker's service, started locally with
   `ats-serve`, over the PDFs `builtin-pdfs` writes, or in CI if the checker's milestone 2 has put
   the gate there by then.
-- **Two pages**, in the editor's plain English, whose words the owner approves. Privacy: what
-  leaves the browser and when (the PDF reading and the school's gateway, saving to an account),
-  what an account keeps, how to delete it, how long the account service's backups keep a deleted
-  account, and which services see what (Cloudflare, Supabase, the school's gateway, the mail
-  provider). Licences: the engine and where the sources of its release are, TeX Live, each
-  template's licence and attribution, the fonts, and the libraries the app ships. Google's brand
-  verification needs the first. Neither is legal advice, and this plan asks for none.
+- **Two pages**, in the editor's plain English, whose words the owner approves. Privacy: what leaves
+  the browser and when (the PDF reading, by Anthropic and the school's gateway, and saving to an
+  account), what an account keeps, how to delete it, how long the account service's backups keep a
+  deleted account, and which services see what (Cloudflare, Supabase, Anthropic, the school's
+  gateway, the mail provider). Licences: the engine and where the sources of its release are, TeX
+  Live, each template's licence and attribution, the fonts, and the libraries the app ships.
+  Google's brand verification needs the first. Neither is legal advice, and this plan asks for none.
 - **Three browsers**: item 18.
 
 ## Done means
@@ -447,9 +461,10 @@ The plan's word, made a list. Each entry says how it is checked.
   built-in template, imports a `.tex` and imports a PDF.
 - **The first load stays under 30 MB** from the hosted files, measured on a cold cache, with its
   time recorded.
-- **A PDF is read by the school's gateway** within the 15 s budget after the person's yes and the
-  bot check, and the consent names who reads it. Without the yes or the check, past a limit, or
-  when the gateway fails, the rules read it, and nothing is sent.
+- **A PDF is read by Claude, or by the school's gateway when Claude gives no answer**, within the
+  15 s budget after the person's yes and the bot check, and the consent names who reads it.
+  Without the yes or the check, past a limit, or when both providers fail, the rules read it, and
+  nothing is sent.
 - **Accounts work online**: signing up and in by email link, by password and with Google on the
   hosted project, with mail from the domain that arrives in an inbox and not in spam; a document
   saved on one device opens on another.
@@ -517,16 +532,16 @@ three can run side by side, each waiting on the owner's part.
    nothing; the console shows no policy violation on any path; and the first load's size and time
    on a cold cache are in the pull request.
 4. [ ] **The privacy and licences pages**, as the polish list says, on the domain, linked from the
-   editor, naming the school's gateway as who reads a PDF's lines. Done when both pages are online
-   in words the owner approved, and a test checks that the licences page names every template and
-   every font family the built-in templates use.
-5. [ ] **The gateway from Cloudflare, measured.** Waits on the launch key. The reading's accuracy on
-   the gateway is measured already (decision 0064), so this measures only what launch changes:
-   with the route run on Cloudflare's network (`wrangler dev --remote`), that the gateway answers
-   it, the invented sets' times through it against the 15 s budget, and the launch key's limits.
-   Done when a record holds the times and the limits, the slowest reply is within the budget, and
-   the daily ceiling follows from them.
-6. [ ] **The reading route live.** The launch key in the Worker; the bot check, the Durable
+   editor, naming Anthropic and the school's gateway as who read a PDF's lines. Done when both pages
+   are online in words the owner approved, and a test checks that the licences page names every
+   template and every font family the built-in templates use.
+5. [ ] **The providers from Cloudflare, measured.** Waits on the launch keys. The reading's accuracy
+   on both is measured already (decisions 0064 and 0109), so this measures only what launch
+   changes: with the route run on Cloudflare's network (`wrangler dev --remote`), that Claude and
+   the gateway each answer it, the invented sets' times through each against the 15 s budget, a
+   fallback's included, and the launch keys' limits. Done when a record holds the times and the
+   limits, the slowest reply is within the budget, and the daily ceiling follows from them.
+6. [ ] **The reading route live.** The launch keys in the Worker; the bot check, the Durable
    Object's limits, the daily ceiling and the hashed address (decision 0103); Turnstile's site key
    in `.env.example`; the consent's and the privacy page's words. Gets an adversarial review: it
    carries resume text and spends the launch key's allowance. Done when
@@ -610,7 +625,7 @@ three can run side by side, each waiting on the owner's part.
 | 2 The engine's files on R2 | medium | 1; the domain and the bucket |
 | 3 The app on a Worker | medium | 2 |
 | 4 Privacy and licences pages | small | 3; the owner's words |
-| 5 The gateway from Cloudflare, measured | small | 3; the launch key |
+| 5 The providers from Cloudflare, measured | small | 3; the launch keys |
 | 6 The reading route live | medium | 3, 4, 5; the route's Turnstile widget |
 | 7 The hosted project | medium | 1, 3; the project |
 | 8 Mail from the domain | small | 7; the mail provider |
@@ -636,9 +651,9 @@ the rest is proposed and approved with the plan.
   policy, no other origin, desktop browsers.
 - **0102. How `main` reaches production**: a deploy job after the checks, the files and the
   database by hand, the secrets, rollback, and stored data kept from launch day.
-- **0103. Reading a PDF at launch**: the school's gateway, the owner's choice, measured from
-  Cloudflare, the bot check before the count, the limits and the daily ceiling in a Durable
-  Object, nothing kept by the route.
+- **0103. Reading a PDF at launch**: Claude first and the school's gateway behind it, the owner's
+  choice (decision 0109), measured from Cloudflare, the bot check before the count, the limits and
+  the daily ceiling in a Durable Object, nothing kept by the route.
 - **0104. Accounts online**: one hosted project configured from the repository, mail from the
   domain, the bot check on signing in, Google and its screen, the extra session, and the proof on
   the hosted project.
@@ -648,7 +663,7 @@ the rest is proposed and approved with the plan.
 - **0107. The import's quality number**: the success rate, published in `docs/import-quality.md`.
 - **0108. Milestone 5's dependencies.**
 
-Items 5, 13 and 19 add records of their own: the gateway measured from Cloudflare, the sign-in
+Items 5, 13 and 19 add records of their own: the providers measured from Cloudflare, the sign-in
 service's ways of telling, and the milestone measured. Item 12 completes decision 0106 with the
 caps' numbers.
 
@@ -660,11 +675,12 @@ Decision 0108. The owner approves these with the plan; each pull request that ad
 |---|---|---|
 | `wrangler`, at an exact version, MIT or Apache 2.0 | development dependency of `apps/editor` | deploys the Worker and its assets, and runs them locally with their bindings |
 | The AWS CLI | GitHub's runners carry it | uploads the engine's files to R2 through its S3 API |
-| Services: the domain, Cloudflare (Workers, R2, Durable Objects, Turnstile), the hosted Supabase project, the mail provider, Google's OAuth client, and a launch key for the school's gateway | the owner's accounts | what the milestone puts online |
+| Services: the domain, Cloudflare (Workers, R2, Durable Objects, Turnstile), the hosted Supabase project, the mail provider, Google's OAuth client, and launch keys for Anthropic's API and the school's gateway | the owner's accounts | what the milestone puts online |
 
 Already dependencies: `@supabase/supabase-js`; the `supabase` CLI, whose `link`, `db push`,
 `config push` and `test db --linked` the `database` workflow and item 14 use;
-`@cloudflare/workers-types`; the AI SDK with its Google and OpenAI-compatible providers. Not added:
+`@cloudflare/workers-types`; the AI SDK with its Anthropic, Google and OpenAI-compatible providers,
+the Anthropic one added by decision 0109. Not added:
 an analytics or error-reporting library, a Turnstile wrapper, an S3 library, a browser driver, or
 a GitHub Action for `wrangler` or the Supabase CLI, which run as pinned development dependencies
 through pnpm.
@@ -678,12 +694,18 @@ through pnpm.
 - **The school's gateway is not a service built for the public.** It serves the school's students
   and staff, its sign-in failed every call for some hours on 1 October 2026 (decision 0044), and
   each key has its limits. The school has not been asked to agree, and what the gateway keeps is
-  not established; the owner set both aside. The rules read every PDF it does not answer within
-  15 s, the daily ceiling stays under the launch key's limits, the consent names it, and no
-  corpus resume is ever sent to it. If the school objects or withdraws the key, the rules read
-  every PDF until the owner chooses again.
+  not established; the owner set both aside. Claude reads first, so the gateway reads only what
+  Claude does not answer; the daily ceiling stays under the launch key's limits, the consent names
+  it, and no corpus resume is ever sent to it. If the school objects or withdraws the key, Claude
+  reads alone, and once the credit is spent too, the rules read every PDF until the owner chooses
+  again.
+- **Anthropic's API is paid, and keeps what it keeps.** The $200 credit is prepaid with auto-reload
+  off, so it cannot be overspent: once it is spent, Claude's calls fail and the gateway reads
+  alone. What Anthropic keeps of the text is not established either, and the owner set it aside;
+  the consent names Anthropic, and no corpus resume is ever sent to it.
 - **Costs run away.** The bot check comes before anything is counted or sent; the per-address
-  limits and the daily ceiling bound the gateway's use, which bills nothing; the caps bound
+  limits and the daily ceiling bound Claude's spend and the gateway's use; the Claude credit is
+  prepaid, with auto-reload off; the caps bound
   storage; Supabase's spend cap stays on; and on Cloudflare's free plan nothing can bill at all.
 - **A free tier runs out or pauses.** A free Supabase project pauses after a week of low activity
   and keeps no backups, and the gateway's key stops at its daily limits. Question 3 chooses; the
@@ -734,8 +756,9 @@ through pnpm.
   makes a Cloudflare API token limited to Workers and R2, and R2's access keys, as Actions
   secrets.
 - **Item 4**: approves the privacy and licences pages' words.
-- **Before item 5**: issues a SoCLaaS key for the launch, apart from the development key, and sets
-  it as the Worker's secret.
+- **Before item 5**: issues a Claude API key and a SoCLaaS key for the launch, apart from the
+  development keys, keeps the Claude Console's auto-reload off, and sets both as the Worker's
+  secrets.
 - **Before item 6**: makes the route's Turnstile widget and sets its secret as the Worker's;
   approves the consent's new words.
 - **Before item 7**: makes the Supabase project, in the chosen region, on the Free plan, and puts
@@ -753,10 +776,11 @@ through pnpm.
 - **May revise the plan page**, docs/editor-plan.md, where this milestone departs from it: section
   8.1's hosting row (one Worker for the app and its route, its rate limit in a Durable Object, the
   engine's files on R2 at their own subdomain), and section 8.2's sentence and section 8.3's rows
-  that name Pages and KV; section 8.1's TeX engines row and section 3's tech stack row, if
-  question 6 keeps BusyTeX's release; sections 1.5, 6.4, 8.3 and 11, now that the owner has chosen
-  the school's gateway for launch; section 8.3's rows for Supabase, the mail provider and the
-  domain; and section 9's milestone 5, with this plan's done-check, marked done after item 19.
+  that name Pages and KV; section 8.1's TeX engines row and section 3's tech stack row, if question
+  6 keeps BusyTeX's release; sections 1.5, 6.4, 8.3 and 11, now that the owner has chosen Claude
+  first and the school's gateway behind it for launch; section 8.3's rows for Supabase, the mail
+  provider and the domain; and section 9's milestone 5, with this plan's done-check, marked done
+  after item 19.
 
 ## How the work is run
 
