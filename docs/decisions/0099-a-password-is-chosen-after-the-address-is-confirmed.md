@@ -1,6 +1,7 @@
 # 0099. A password is chosen after the address is confirmed
 
-Date: 2026-10-21 · Status: proposed (milestone 4 item 5, after its adversarial review); amends 0094
+Date: 2026-10-21 · Status: accepted, approved by the owner on 21 October 2026 (milestone 4 item 5,
+after its adversarial review); amends 0094
 
 ## Context
 

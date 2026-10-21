@@ -349,7 +349,7 @@ it; from item 7 on, Stage 2 uses item 4's client.
 
 ### Stage 3. Close
 
-10. [ ] **The milestone, proven.** By hand, with two browser profiles against the dev server and
+10. [x] **The milestone, proven.** By hand, with two browser profiles against the dev server and
     the local stack: one account saves a built-in document, a `.tex` import and a PDF import on the
     first profile, and all three open on the second, the `.tex` one compiling; a second account on
     the second profile sees none of them; the first account deletes a document and the other
