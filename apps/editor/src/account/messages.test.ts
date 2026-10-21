@@ -22,6 +22,7 @@ import {
   TOO_MANY,
   TOO_MANY_TRIES,
   UNREACHABLE,
+  unsentNotice,
   WRONG_CURRENT,
   WRONG_PASSWORD,
 } from "./messages";
@@ -165,5 +166,23 @@ describe("keepsRule", () => {
     // An emoji is one character of four bytes.
     expect(keepsRule("🙂".repeat(8))).toBe(true);
     expect(keepsRule("🙂".repeat(19))).toBe(false);
+  });
+});
+
+describe("unsentNotice", () => {
+  it("tells a document waiting for the connection from one the account refused", () => {
+    const waiting = unsentNotice([{ title: "Ada Quist" }]);
+    expect(waiting).toContain("Not saved yet: Ada Quist. Try again once you are online.");
+    expect(waiting).not.toContain("could not keep");
+
+    // Refused: waiting for the connection cannot help, so it is not what the person is told.
+    const refused = unsentNotice([{ title: "Bo Lund", refused: true }]);
+    expect(refused).toContain("Your account could not keep: Bo Lund");
+    expect(refused).toContain("Make it smaller or delete it, then sign out again.");
+    expect(refused).not.toContain("online");
+
+    const both = unsentNotice([{ title: "Ada Quist" }, { title: "Bo Lund", refused: true }]);
+    expect(both).toContain("Not saved yet: Ada Quist.");
+    expect(both).toContain("could not keep: Bo Lund");
   });
 });

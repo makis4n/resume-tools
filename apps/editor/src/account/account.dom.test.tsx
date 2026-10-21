@@ -6,6 +6,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App";
+import { DocumentStore } from "../storage/store";
+import { curated } from "../templates/curated";
 import { AccountEntry } from "./AccountEntry";
 import { Account, RECOVERING_KEY } from "./account";
 import { type SessionStorage, STORAGE_KEY, VERIFIER_KEY, verifierKeyOf } from "./client";
@@ -22,6 +24,7 @@ import {
   SAME_PASSWORD,
   SIGNED_IN_TOO_LONG_AGO,
   TOO_MANY,
+  unsentNotice,
   WRONG_CURRENT,
   WRONG_PASSWORD,
 } from "./messages";
@@ -41,6 +44,36 @@ vi.mock("@supabase/supabase-js", () => {
   return {
     createClient: () => {
       throw new Error("the real client is never made in these tests");
+    },
+  };
+});
+
+// The account's server for the sync queue (item 7), replaced by one that counts how often it is
+// made and answers as an empty account would, or as one that cannot be reached.
+const servers = vi.hoisted(() => ({ made: 0, unreachable: false, inserted: [] as string[] }));
+vi.mock("../storage/supabase-server", async () => {
+  const { ServerUnavailable } = await import("../storage/server");
+  return {
+    SupabaseServer: class {
+      constructor() {
+        servers.made++;
+      }
+      async list() {
+        return [];
+      }
+      async get() {
+        return null;
+      }
+      async insert({ id }: { id: string }) {
+        if (servers.unreachable) throw new ServerUnavailable();
+        servers.inserted.push(id);
+        return { ok: true, revision: 1, updatedAt: Date.now() };
+      }
+      async update() {
+        if (servers.unreachable) throw new ServerUnavailable();
+        return { ok: true, revision: 2, updatedAt: Date.now() };
+      }
+      async remove() {}
     },
   };
 });
@@ -178,6 +211,9 @@ let fetched: string[];
 
 beforeEach(() => {
   real.imported = false;
+  servers.made = 0;
+  servers.unreachable = false;
+  servers.inserted = [];
   fetched = [];
   // The editor's own requests answer nothing; any request at all is noted.
   vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -835,5 +871,64 @@ describe("changing the password while signed in", () => {
     await click("Email me a link to set one");
     expect(asked.resets.map((each) => each.email)).toEqual([EMAIL]);
     expect(host.textContent).toContain(`We sent a link to set a new password to ${EMAIL}`);
+  });
+});
+
+describe("the account's documents (item 7)", () => {
+  const USER = session().user.id;
+
+  it("makes no server for a signed-out page, with or without the account's client", async () => {
+    const { asked, load } = fake();
+    act(() => root.render(<App account={new Account({ load })} />));
+    await settle();
+    expect(servers.made).toBe(0);
+    expect(asked.loads).toBe(0);
+    // Sign-in opened loads the client; still signed out, nothing is synced.
+    await click("Sign in");
+    expect(asked.loads).toBe(1);
+    expect(servers.made).toBe(0);
+    expect(toSupabase()).toEqual([]);
+    expect(real.imported).toBe(false);
+  });
+
+  it("syncs a signed-in page's documents through one server, as the account's user", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(session()));
+    const store = new DocumentStore();
+    store.setAccount(USER);
+    const id = await store.create("jake", curated("jake").sample);
+    await store.close();
+    const account = new Account({ load: fake({ session: session() }).load });
+    act(() => root.render(<App account={account} />));
+    await settle();
+    expect(account.userId()).toBe(USER);
+    expect(servers.made).toBe(1);
+    expect(servers.inserted).toEqual([id]);
+  });
+
+  it("signs out only once what is pending is sent, and names what could not be", async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(session()));
+    const store = new DocumentStore();
+    store.setAccount(USER);
+    const id = await store.create("jake", curated("jake").sample);
+    const title = (await store.syncRow(id))?.title ?? "";
+    await store.close();
+    servers.unreachable = true;
+    const { asked, load } = fake({ session: session() });
+    act(() => root.render(<App account={new Account({ load })} />));
+    await settle();
+    await click("Sign out");
+    expect(host.textContent).toContain(unsentNotice([{ title }]));
+    expect(host.textContent).toContain(`Signed in as ${EMAIL}`);
+    expect(asked.signOuts).toEqual([]);
+
+    // Back online: it is sent, the account's documents leave this browser, and it signs out.
+    servers.unreachable = false;
+    await click("Sign out");
+    expect(servers.inserted).toEqual([id]);
+    expect(asked.signOuts).toEqual([{ scope: "local" }]);
+    expect(button("Sign in")).toBeDefined();
+    const after = new DocumentStore();
+    expect(await after.syncRows()).toEqual([]);
+    await after.close();
   });
 });

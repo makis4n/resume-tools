@@ -332,7 +332,7 @@ it; from item 7 on, Stage 2 uses item 4's client.
    in, an open document changed elsewhere, offline and back, the first sign-in's question, sign-out
    with and without pending saves, another account on the same browser, deletion on another device
    with and without pending saves.
-7. [ ] **The queue, on Supabase.** The server interface over the client and the `documents` table.
+7. [x] **The queue, on Supabase.** The server interface over the client and the `documents` table.
    Gets an adversarial review. Done when an integration test with two devices on one account shows
    a built-in document and a PDF import saved on one open on the other, a conflict ending in two
    documents, and a deletion reaching the other device.

@@ -70,3 +70,70 @@ export class ServerUnavailable extends Error {
     this.name = "ServerUnavailable";
   }
 }
+
+/**
+ * The account refused a document in a way that sending it again cannot change (decision 0098): a
+ * check it breaks (`23514`), a string it cannot keep (`22P05`, `22P02`), a write its policies can
+ * never let through (`42501`), or one over the size the browser keeps a document to, refused here
+ * without a request. The queue does not try it again: the document stays in this browser, marked
+ * as not saved to the account, until a later save changes it. `code` is the database's code, or
+ * `too-large`; it is for the console, never for the person.
+ */
+export class ServerRefused extends Error {
+  constructor(
+    readonly code: string,
+    options?: ErrorOptions,
+  ) {
+    super(`the account refused the document (${code})`, options);
+    this.name = "ServerRefused";
+  }
+}
+
+/** The most a document may be as compact JSON, in UTF-8 bytes (decision 0098). */
+export const MAX_DOCUMENT_BYTES = 2_000_000;
+
+/** The most characters of a title the account keeps; a longer one is cut to it (decision 0098). */
+export const MAX_SENT_TITLE = 1000;
+
+/**
+ * What goes to the account of an upload (decision 0098): every string in it, the document's and its
+ * keys included, without U+0000 and with each lone surrogate replaced by U+FFFD, which `jsonb` and
+ * `text` cannot hold; the title cut to `MAX_SENT_TITLE` characters. Throws `ServerRefused` for a
+ * document over `MAX_DOCUMENT_BYTES` as compact JSON, which is never sent.
+ */
+export function cleanUpload(upload: Upload): Upload {
+  const document = cleanJson(upload.document);
+  const bytes = new TextEncoder().encode(JSON.stringify(document) ?? "null").length;
+  if (bytes > MAX_DOCUMENT_BYTES) throw new ServerRefused("too-large");
+  return {
+    id: upload.id,
+    kind: upload.kind,
+    templateId: cleanString(upload.templateId),
+    // Cut by code points, as Postgres counts characters, so no surrogate pair is split.
+    title: Array.from(cleanString(upload.title)).slice(0, MAX_SENT_TITLE).join(""),
+    document,
+  };
+}
+
+/** A string without U+0000, and with U+FFFD for each lone surrogate. */
+export function cleanString(text: string): string {
+  const kept = text.includes("\0") ? text.replaceAll("\0", "") : text;
+  const wellFormed = (kept as { toWellFormed?: () => string }).toWellFormed;
+  return typeof wellFormed === "function"
+    ? wellFormed.call(kept)
+    : kept.replace(LONE_SURROGATE, "\uFFFD");
+}
+
+/** A surrogate with no partner, for browsers without `toWellFormed`. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/** A JSON value with every string in it, keys included, cleaned (`cleanString`). */
+export function cleanJson(value: unknown): unknown {
+  if (typeof value === "string") return cleanString(value);
+  if (Array.isArray(value)) return value.map(cleanJson);
+  if (typeof value !== "object" || value === null) return value;
+  // No prototype, so that a key named `__proto__` is a key like any other.
+  const cleaned: Record<string, unknown> = Object.create(null);
+  for (const [key, each] of Object.entries(value)) cleaned[cleanString(key)] = cleanJson(each);
+  return cleaned;
+}

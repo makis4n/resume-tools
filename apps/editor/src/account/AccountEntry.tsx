@@ -3,10 +3,13 @@
  * the sign-in panel, or, signed in, the account's email, "Change password" and "Sign out". A reset
  * link opens the recovery state, where the person sets a new password, and the link of "Make an
  * account" opens it to choose the first one (decision 0099). It shows only when the
- * editor has accounts (`accountsConfigured`); item 9 dresses the account's state further.
+ * editor has accounts (`accountsConfigured`); item 9 dresses the account's state further. With the
+ * page's sync (item 7), "Sign out" sends what is pending first, and says which documents kept it
+ * signed in when some could not be sent.
  */
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { Account } from "./account";
+import type { AccountSync } from "./account-sync";
 import { ChangePasswordPanel, PASSWORD_SET, RecoveryPanel } from "./NewPassword";
 import { SignInPanel } from "./SignInPanel";
 
@@ -18,7 +21,7 @@ const HEADER = {
   gap: "0.5rem",
 } as const;
 
-export function AccountEntry({ account }: { account: Account }) {
+export function AccountEntry({ account, sync }: { account: Account; sync?: AccountSync }) {
   const state = useSyncExternalStore(account.subscribe, account.state);
   const [opened, setOpened] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -46,7 +49,7 @@ export function AccountEntry({ account }: { account: Account }) {
     setChanging(false);
     setSaid(undefined);
     setSigningOut(true);
-    setProblem(await account.signOut());
+    setProblem(await (sync ?? account).signOut());
     setSigningOut(false);
     setOpened(false);
   };

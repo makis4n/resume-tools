@@ -125,6 +125,8 @@ export class Account {
   readonly #storage: SessionStorage | undefined;
   readonly #place: Place;
   #state: AccountState = { status: "signed-out" };
+  /** The signed-in session's user id, kept beside the state, which shows only what the header does. */
+  #userId: string | undefined;
   readonly #listeners = new Set<() => void>();
   #client: Promise<SupabaseClient> | undefined;
   #started = false;
@@ -138,22 +140,36 @@ export class Account {
   /** The state now; the same object until it changes, as `useSyncExternalStore` asks. */
   readonly state = (): AccountState => this.#state;
 
+  /**
+   * The user id of the session the account is signed in with, while there is one (signed in, or
+   * recovering): the account the sync queue sends documents to (item 7). Listeners are told when it
+   * changes, as when the state does.
+   */
+  readonly userId = (): string | undefined => this.#userId;
+
   /** Be told when the state changes; returns what stops it. */
   readonly subscribe = (listener: () => void): (() => void) => {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
   };
 
-  #set(next: AccountState): void {
+  /**
+   * Move to `next`, with the user id of the session it comes from; a state read from no session
+   * keeps the one there was, and signed out has none.
+   */
+  #set(next: AccountState, userId: string | undefined = this.#userId): void {
     this.#keep(next);
+    const id = next.status === "signed-out" ? undefined : userId;
     const now = this.#state;
     if (
       now.status === next.status &&
       now.email === next.email &&
       now.notice === next.notice &&
-      now.first === next.first
+      now.first === next.first &&
+      this.#userId === id
     )
       return;
+    this.#userId = id;
     this.#state = next;
     for (const listener of this.#listeners) listener();
   }
@@ -196,7 +212,7 @@ export class Account {
         // started with, is read once it is ready (`#connect`), so the header does not flicker.
         client.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
           if (event === "INITIAL_SESSION") return;
-          this.#set(this.#after(event, session));
+          this.#set(this.#after(event, session), session?.user.id);
         });
         return client;
       });
@@ -294,10 +310,11 @@ export class Account {
     if (state.status === "signed-in") {
       const email = state.email ?? "";
       const kept = choose ? recovering(email, true) : this.#recoveringAs(email);
-      if (kept !== undefined) return this.#set(kept);
+      if (kept !== undefined) return this.#set(kept, session?.user.id);
     }
     this.#set(
       state.status === "signed-out" && said !== undefined ? { ...state, notice: said } : state,
+      session?.user.id,
     );
   }
 
@@ -391,7 +408,7 @@ export class Account {
       session = data.session;
       return { error };
     });
-    if (problem === undefined) this.#set(stateOf(session));
+    if (problem === undefined) this.#set(stateOf(session), (session as Session | null)?.user.id);
     return problem;
   }
 
