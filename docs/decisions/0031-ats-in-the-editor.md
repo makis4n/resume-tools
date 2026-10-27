@@ -1,6 +1,8 @@
 # 0031. The ATS in the editor
 
-Date: 2026-09-25 · Status: proposed; needs the editor owner's agreement
+Date: 2026-09-25 · Status: proposed; needs the editor owner's agreement. The editor owner agreed to
+its curated-template gate on 27 October 2026, with the plan for milestone 5 (item 17); the rest
+still needs it
 
 ## Context
 

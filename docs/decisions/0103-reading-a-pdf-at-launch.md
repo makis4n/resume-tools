@@ -1,9 +1,9 @@
 # 0103. Reading a PDF at launch
 
-Date: 2026-10-21 · Status: proposed, with the plan for milestone 5 (docs/milestone-5.md); the
-providers are the owner's choice of 21 October 2026, Claude first and the school's gateway behind it
-(decision 0109); extends 0028 and 0056, and amends 0036 and 0044, which asked for the school's leave
-before launch
+Date: 2026-10-21 · Status: accepted, approved by the owner on 27 October 2026 with the plan for
+milestone 5 (docs/milestone-5.md); the providers are the owner's choice of 21 October 2026, Claude
+first and the school's gateway behind it (decision 0109); extends 0028 and 0056, and amends 0036 and
+0044, which asked for the school's leave before launch
 
 ## Context
 

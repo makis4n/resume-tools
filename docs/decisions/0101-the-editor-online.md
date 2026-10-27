@@ -1,8 +1,9 @@
 # 0101. The editor online
 
-Date: 2026-10-21 · Status: proposed, with the plan for milestone 5 (docs/milestone-5.md); revises
-plan section 8.1's hosting row, as 0028 asked; replaces 0028's Pages Function and 0029's Pages job
-with a Worker; amends 0010 on where the manifest lives and 0094 on third-party scripts
+Date: 2026-10-21 · Status: accepted, approved by the owner on 27 October 2026 with the plan for
+milestone 5 (docs/milestone-5.md); revises plan section 8.1's hosting row, as 0028 asked; replaces
+0028's Pages Function and 0029's Pages job with a Worker; amends 0010 on where the manifest lives
+and 0094 on third-party scripts
 
 ## Context
 

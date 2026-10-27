@@ -1,6 +1,7 @@
 # 0107. The import's quality number
 
-Date: 2026-10-21 · Status: proposed, with the plan for milestone 5 (docs/milestone-5.md)
+Date: 2026-10-21 · Status: accepted, approved by the owner on 27 October 2026 with the plan for
+milestone 5 (docs/milestone-5.md)
 
 ## Context
 

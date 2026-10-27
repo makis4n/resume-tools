@@ -23,15 +23,17 @@ Unlike milestone 4's plan, this one was written before the owner settled anythin
 it is a proposal. The ones that spend money, need an account only the owner can open, or speak for
 the project are the owner's, gathered under "What the owner settles" with a recommendation each.
 As in milestones 3 and 4, the work stops at the plan: this file and its decision records are
-merged, and the owner approves them before a build starts.
+merged, and the owner approves them before a build starts. The owner approved them on 27 October
+2026, with decisions 0101 to 0108 and their dependencies, and settled the questions below.
 
 ## What the owner settles
 
-Seven questions; the owner settled the second on 21 October 2026. Items that wait on an answer
-say so.
+Seven questions; the owner settled the second on 21 October 2026 and the rest on 27 October 2026.
+Only the domain's name is still to come, and the items that wait on it say so.
 
 1. **A domain of our own.** Recommended: buy one, about $10 a year at cost through Cloudflare's
-   registrar; the name is the owner's. In practice it is not optional. Mail providers send to
+   registrar; the name is the owner's. **Settled on 27 October 2026: buy one, its name still to be
+   chosen.** Items 2 onward wait on it. In practice it is not optional. Mail providers send to
    strangers only from a domain whose DNS they can check, and the account service's own sender
    mails only the project's team. R2's `r2.dev` address is rate-limited and meant for development,
    so the engine's files need a custom domain in the same Cloudflare account. And Google shows an
@@ -51,25 +53,33 @@ say so.
    cap on) from launch day. A Free project pauses after a week of low activity and signs nobody in
    until the owner resumes it; it keeps no backups, so one mistake loses people's documents for
    good; and the leaked-password check is Pro's. Pro never pauses, keeps a daily backup for seven
-   days, and grows file storage from 1 GB to 100 GB.
+   days, and grows file storage from 1 GB to 100 GB. **Settled on 27 October 2026: Free, before
+   and after launch.** The owner accepts the pauses, no backups and no leaked-password check
+   (decisions 0102 and 0104), and Free's 1 GB of file storage for every account together, which
+   item 12 weighs its caps against.
 4. **The project's region**, near most of the people expected. Supabase offers 17, Stockholm,
    Frankfurt, London and Singapore among them. A region is chosen when the project is made;
    moving means a new project. Cloudflare serves the app and the engine from the location nearest
    each person wherever the project is, so only the account service's distance depends on this.
+   **Settled on 27 October 2026: Singapore.**
 5. **The mail provider.** Recommended: **Resend**, free for 3,000 emails a month and 100 a day, $20
    a month for 50,000. It is on Supabase's list of providers and has a guide for exactly this.
    Postmark (100 a month free), Amazon SES ($0.10 per 1,000, once out of its sandbox) and Brevo are
-   the alternatives. Each needs the domain.
+   the alternatives. Each needs the domain. **Settled on 27 October 2026: Resend.**
 6. **Our own engine build and a newer TeX Live.** Milestone 2 left the per-engine build to this
    milestone ("it changes size and licensing, not behaviour"), and decision 0011 a newer TeX Live
    with it. Recommended: after launch. Behaviour does not change; the first load was about 14 MB
    compressed against the 30 MB target, which items 2 and 3 measure from the CDN; and the licences
    page names the sources of the BusyTeX release the editor ships. It is the heaviest engineering
-   item in the plan (section 8.4).
+   item in the plan (section 8.4). **Settled on 27 October 2026: after launch.** The editor
+   launches on BusyTeX's release.
 7. **Who sees it first.** Recommended: the address stays unlisted, shared by the owners alone,
-   until item 19's check passes; then the owner decides when to tell anyone.
+   until item 19's check passes; then the owner decides when to tell anyone. **Settled on 27
+   October 2026: the owner left it to this recommendation.**
 
-What it costs on the recommended choices:
+The owner also agreed, on 27 October 2026, to decision 0031's template gate, so item 17 stays.
+
+What it costs on the owner's choices:
 
 | What | Cost | When paying starts, or grows |
 |---|---|---|
@@ -77,7 +87,7 @@ What it costs on the recommended choices:
 | Cloudflare: the Worker, R2, the cache, Turnstile | nothing | past 100,000 requests a day to the reading route, or 10 GB of files |
 | Anthropic's API, Claude Haiku 5.5 | well under a tenth of a cent a PDF, from the owner's $200 of credit | the credit is prepaid, with auto-reload off: once it is spent, the gateway reads alone |
 | SoCLaaS, the school's gateway, behind Claude | nothing | never; the launch key's own limits cap a day's reading |
-| Supabase | nothing while building | $25 a month from launch day, on Pro |
+| Supabase, on Free | nothing | never; the owner chooses again if the Free plan's limits are reached |
 | Resend | nothing up to 100 emails a day | $20 a month past them |
 | Google's sign-in | nothing | never |
 
@@ -153,11 +163,11 @@ What it costs on the recommended choices:
   0109). The school's leave and what either provider keeps are set aside, so no leave is sought
   and the consent goes on promising only what the editor's own service does
   (`src/pdf/consent.ts`, decision 0103).
-- **The engine stays BusyTeX's release**, if the owner agrees (question 6). Section 8.1's TeX
+- **The engine stays BusyTeX's release**, as the owner chose (question 6). Section 8.1's TeX
   engines row says the engines are built "from TeX Live sources", and milestone 2 left that build
   to this milestone.
-- **A free Supabase project pauses after a week idle** (section 8.3) and keeps no backups.
-  Question 3.
+- **A free Supabase project pauses after a week idle** (section 8.3) and keeps no backups. The
+  owner keeps the project on Free after launch (question 3).
 - Kept: Cloudflare and Supabase never talk to each other (section 8.2). The bot check on signing
   in is the account service's own call to Turnstile, and nothing on Cloudflare reaches Supabase.
 
@@ -289,7 +299,7 @@ Decision 0103, which extends decisions 0028, 0047 and 0056.
 
 Decision 0104, which extends decisions 0089, 0094, 0096 and 0099.
 
-- **One hosted project**, production. Its plan and region are questions 3 and 4. No staging
+- **One hosted project**, production, in Singapore, on Free (questions 3 and 4). No staging
   project and no branching: the local stack is where changes are tried, as in milestone 4.
 - **Configured from the repository.** The migrations and `config.toml` that run the local stack
   configure the hosted project too, through the `database` workflow. A `[remotes.production]`
@@ -297,12 +307,12 @@ Decision 0104, which extends decisions 0089, 0094, 0096 and 0099.
   bot check, Google, the rate limits, and the minimum time between two emails to one person,
   which the local stack sets to one second for its tests. Its secrets come from the workflow's
   environment through `env()`, which `config push` never sends unresolved. The local stack keeps
-  Mailpit, no bot check and its fixed keys. A setting `config push` does not manage, such as the
-  leaked-password check, is set in the dashboard and listed in the README. The hosted schema is
+  Mailpit, no bot check and its fixed keys. A setting `config push` does not manage is set in the
+  dashboard and listed in the README. The hosted schema is
   never changed in the dashboard, which would break `db push`'s history.
 - **Addresses**: the site address is `https://<domain>`, and the one redirect pattern
   `https://<domain>/**`, since links come back with the service's own query.
-- **Mail** goes out through the mail provider (question 5) as the project's SMTP server, from an
+- **Mail** goes out through Resend (question 5) as the project's SMTP server, from an
   address on the domain with SPF, DKIM and DMARC set, and with the provider's link tracking off,
   since it rewrites sign-in links. Every email the account service sends uses the editor's own
   template in plain English: confirming an address, the sign-in link, a reset, a change of
@@ -325,8 +335,7 @@ Decision 0104, which extends decisions 0089, 0094, 0096 and 0099.
   Turnstile when it opens and sends a fresh token with each request as `captchaToken`. Signing in
   with Google and refreshing a session need none. Locally it stays off, and the integration tests
   that cover it turn it on with Turnstile's test keys, which always pass.
-- **The leaked-password check** goes on the day the project moves to Pro (question 3), since the
-  Free plan lacks it.
+- **No leaked-password check**: the Free plan lacks it, and the project stays on Free (question 3).
 - **Google**, as decision 0094 designed it: "Continue with Google", hidden while no client is
   configured; a Google identity with the same verified address joins the existing account. The
   owner's production client is a web application with the domain as its JavaScript origin and
@@ -338,8 +347,8 @@ Decision 0104, which extends decisions 0089, 0094, 0096 and 0099.
   and through the account service that is `<ref>.supabase.co`. The owner submits the brand, with
   the home page and the privacy page on the domain verified in Search Console; a review takes two
   or three working days. If Google refuses it because the callback is on `supabase.co`, as some
-  have reported, the screen names `<ref>.supabase.co` until the owner takes Supabase's custom
-  domain, $10 a month and only on Pro, which moves the account service to `auth.<domain>`.
+  have reported, the screen names `<ref>.supabase.co`. Supabase's custom domain, which would move
+  the account service to `auth.<domain>`, is only on Pro, so on Free the screen stays that way.
 - **The extra session a password change leaves** is closed: the session the change signs in with
   to prove the current password is signed out at once, revoking its refresh token, so nothing is
   left on the server to lapse. If the hosted service checks a current password itself, the change
@@ -440,11 +449,10 @@ The plan's word, made a list. Each entry says how it is checked.
   tests cover each message.
 - **The built-in templates pass the checker's readiness checks** (decision 0031): each, compiled
   with invented content, with no critical finding and no layout warning. "Templates that fail the
-  gate need fixing before launch", and "A failure is a template bug". Decision 0031 is still
-  proposed, needing the editor owner's agreement, which the owner gives with this plan or the gate
-  leaves it. Run by hand through `POST /v1/analyze` on the checker's service, started locally with
-  `ats-serve`, over the PDFs `builtin-pdfs` writes, or in CI if the checker's milestone 2 has put
-  the gate there by then.
+  gate need fixing before launch", and "A failure is a template bug". The editor owner agreed to
+  decision 0031's gate on 27 October 2026. Run by hand through `POST /v1/analyze` on the checker's
+  service, started locally with `ats-serve`, over the PDFs `builtin-pdfs` writes, or in CI if the
+  checker's milestone 2 has put the gate there by then.
 - **Two pages**, in the editor's plain English, whose words the owner approves. Privacy: what leaves
   the browser and when (the PDF reading, by Anthropic and the school's gateway, and saving to an
   account), what an account keeps, how to delete it, how long the account service's backups keep a
@@ -488,13 +496,13 @@ The plan's word, made a list. Each entry says how it is checked.
 - The checker in the editor, and its hosting: @keaenlim's milestone 2. The editor launches with no
   checker panel, and `VITE_ATS_SERVICE_URL` stays unset in production. Only the template gate
   above is this milestone's.
-- Our own engine build and a newer TeX Live, if the owner agrees (question 6).
+- Our own engine build and a newer TeX Live, which the owner left to after launch (question 6).
 - The import's known limits accepted in decision 0066, and the import gaps on the status page; the
   owner may move any of them into the polish stage.
 - Analytics, error reporting, session recording, or any service that watches how people use the
   editor. The owners see Cloudflare's and Supabase's own counts.
 - A staging project, preview deploys and Supabase's branching.
-- Supabase's custom domain, unless Google's brand review needs it (decision 0104).
+- Supabase's custom domain, which is Pro's (decision 0104).
 - Two-factor sign-in; Apple, GitHub or any other provider; sharing; live updates; version history;
   export of documents or of the account; payments.
 - Phones and tablets.
@@ -602,7 +610,7 @@ three can run side by side, each waiting on the owner's part.
 
 16. [ ] **The editor's own dialogs, and the messages when something online is down.** Done when the
     tests the polish list names pass.
-17. [ ] **The template gate.** Waits on the owner's agreement to decision 0031's gate. Done when
+17. [ ] **The template gate.** Decision 0031's gate, which the owner agreed to. Done when
     each built-in template's PDF passes the checker's readiness checks through `POST /v1/analyze`,
     or the fix that makes it pass is merged.
 18. [ ] **Three browsers.** By hand on the hosted site, in current desktop Chrome, Firefox and
@@ -616,8 +624,8 @@ three can run side by side, each waiting on the owner's part.
 19. [ ] **The milestone, proven.** On the hosted site, by hand: every box under "Done means", with
     two devices; the first load cold and warm, an edit's page, a `.tex` import and a PDF read by
     the model, each timed against section 4.3. One record measures the milestone. Done when that
-    record is merged and every box holds. Launch is then the owner's: Pro from that day, with the
-    leaked-password check on, if question 3 chose it, and the address shared as question 7 says.
+    record is merged and every box holds. Launch is then the owner's: the address shared as
+    question 7 says, with the project still on Free.
 
 | Item | Size | Depends on |
 |---|---|---|
@@ -637,7 +645,7 @@ three can run side by side, each waiting on the owner's part.
 | 14 Accounts proven on the hosted project | small | 8 to 13 |
 | 15 The number, published | small | 1 |
 | 16 Dialogs and messages | small | 1 |
-| 17 The template gate | small to medium | 1; the owner's agreement to 0031's gate |
+| 17 The template gate | small to medium | 1 |
 | 18 Three browsers | medium | 6, 8 to 11 |
 | 19 The milestone, proven | small | all |
 
@@ -708,9 +716,11 @@ through pnpm.
   prepaid, with auto-reload off; the caps bound
   storage; Supabase's spend cap stays on; and on Cloudflare's free plan nothing can bill at all.
 - **A free tier runs out or pauses.** A free Supabase project pauses after a week of low activity
-  and keeps no backups, and the gateway's key stops at its daily limits. Question 3 chooses; the
-  editor says in plain words when the account service cannot be reached, and documents stay in
-  the browser; past the key's limits the rules read.
+  and keeps no backups, and the gateway's key stops at its daily limits. The owner chose Free after
+  launch too (question 3), so a migration that destroys data cannot be undone, and nothing dumps the
+  database before one for now (decision 0102). The editor says in plain words when the account
+  service cannot be reached, and documents stay in the browser; past the key's limits the rules
+  read.
 - **The free plan's 10 ms of CPU** a request may not parse and check a large PDF's lines. Item 6
   measures it on the largest invented PDF; past it the request fails and the rules read, or the
   owner takes the paid plan.
@@ -739,7 +749,8 @@ through pnpm.
   rerun sign-in and the two-account proof there, and item 13 checks the replies that tell which
   addresses have accounts.
 - **Google's brand review stalls** on the `supabase.co` callback, as some have reported. The
-  screen then names the project's address, which works, until the owner takes the custom domain.
+  screen then names the project's address, which works; the custom domain is Pro's, so on Free it
+  stays that way.
 - **The engine's licences.** The editor hands every visitor BusyTeX's build of programs under the
   GPL. The licences page names the sources of the exact release it ships, and the owner reads the
   obligation once, as section 8.4 asks.
@@ -748,22 +759,21 @@ through pnpm.
 
 ## What the owner does
 
-- **Before item 1**: restores Actions billing; approves this plan, decisions 0101 to 0108 and the
-  dependencies of decision 0108; answers the seven questions; and agrees to decision 0031's
-  template gate, or leaves item 17 out.
-- **Before item 2**: buys the domain and adds it to the Cloudflare account; makes the R2 bucket,
-  gives it `files.<domain>` as its custom domain, and adds the cache rule for that subdomain;
-  makes a Cloudflare API token limited to Workers and R2, and R2's access keys, as Actions
-  secrets.
+- **Before item 1**: restores Actions billing. The plan, decisions 0101 to 0108, the dependencies
+  of decision 0108, the seven questions and decision 0031's gate were settled on 27 October 2026.
+- **Before item 2**: chooses the domain's name, buys it and adds it to the Cloudflare account; makes
+  the R2 bucket, gives it `files.<domain>` as its custom domain, and adds the cache rule for that
+  subdomain; makes a Cloudflare API token limited to Workers and R2, and R2's access keys, as
+  Actions secrets.
 - **Item 4**: approves the privacy and licences pages' words.
 - **Before item 5**: issues a Claude API key and a SoCLaaS key for the launch, apart from the
   development keys, keeps the Claude Console's auto-reload off, and sets both as the Worker's
   secrets.
 - **Before item 6**: makes the route's Turnstile widget and sets its secret as the Worker's;
   approves the consent's new words.
-- **Before item 7**: makes the Supabase project, in the chosen region, on the Free plan, and puts
+- **Before item 7**: makes the Supabase project, in Singapore, on the Free plan, and puts
   its access token, database password and ref in Actions secrets.
-- **Before item 8**: opens the mail provider's account, adds its DNS records to the domain, turns
+- **Before item 8**: opens a Resend account, adds its DNS records to the domain, turns
   its link tracking off, and puts the SMTP password in Actions secrets.
 - **Before item 9**: makes the sign-in's Turnstile widget and puts its secret in Actions secrets.
 - **Before item 10**: verifies the domain in Search Console; registers Google's OAuth client and
@@ -771,16 +781,15 @@ through pnpm.
   and secret in Actions secrets.
 - **Item 14**: runs the hosted proof's script on their own machine with the service key, which
   never leaves it.
-- **Launch day** (item 19): moves the project to Pro if question 3 chose it and turns on its
-  leaked-password check in the dashboard, and shares the address as question 7 says.
+- **Launch day** (item 19): shares the address as question 7 says. The project stays on Free.
 - **May revise the plan page**, docs/editor-plan.md, where this milestone departs from it: section
   8.1's hosting row (one Worker for the app and its route, its rate limit in a Durable Object, the
   engine's files on R2 at their own subdomain), and section 8.2's sentence and section 8.3's rows
-  that name Pages and KV; section 8.1's TeX engines row and section 3's tech stack row, if question
-  6 keeps BusyTeX's release; sections 1.5, 6.4, 8.3 and 11, now that the owner has chosen Claude
-  first and the school's gateway behind it for launch; section 8.3's rows for Supabase, the mail
-  provider and the domain; and section 9's milestone 5, with this plan's done-check, marked done
-  after item 19.
+  that name Pages and KV; section 8.1's TeX engines row and section 3's tech stack row, now that
+  question 6 keeps BusyTeX's release; sections 1.5, 6.4, 8.3 and 11, now that the owner has chosen
+  Claude first and the school's gateway behind it for launch; section 8.3's rows for Supabase, the
+  mail provider and the domain; and section 9's milestone 5, with this plan's done-check, marked
+  done after item 19.
 
 ## How the work is run
 
