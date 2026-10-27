@@ -1,7 +1,7 @@
 # 0106. Caps per account
 
-Date: 2026-10-21 · Status: proposed, with the plan for milestone 5 (docs/milestone-5.md); its
-numbers are measured in item 12, which completes this record
+Date: 2026-10-21 · Status: accepted, approved by the owner on 27 October 2026 with the plan for
+milestone 5 (docs/milestone-5.md); its numbers are measured in item 12, which completes this record
 
 ## Context
 

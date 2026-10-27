@@ -1,7 +1,7 @@
 # 0102. How main reaches production
 
-Date: 2026-10-21 · Status: proposed, with the plan for milestone 5 (docs/milestone-5.md); extends
-0029, and amends 0096 on CI and the hosted project
+Date: 2026-10-21 · Status: accepted, approved by the owner on 27 October 2026 with the plan for
+milestone 5 (docs/milestone-5.md); extends 0029, and amends 0096 on CI and the hosted project
 
 ## Context
 
@@ -63,6 +63,9 @@ people keep documents in the account, so a careless deploy can lose someone's wo
 - A merged migration can wait unapplied until the owner runs the `database` workflow, whose dry
   run shows what is pending. A deploy whose code needs that migration waits for it; the pull
   request that adds a migration says so.
+- The project stays on Supabase's Free plan, which keeps no backups (decision 0104), so a
+  migration that destroys data cannot be undone. The owner chose on 27 October 2026 not to have the
+  `database` workflow dump the database before it applies one, for now.
 - The engine's upload, about 490 MB in 28,658 files, runs only when the engine changes, which is
   rare.
 - GitHub's billing failure of 21 October 2026 shows what one pipeline costs when it stops; the

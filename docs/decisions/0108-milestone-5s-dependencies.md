@@ -1,7 +1,8 @@
 # 0108. Milestone 5's dependencies
 
-Date: 2026-10-21 · Status: proposed, with the plan for milestone 5 (docs/milestone-5.md); the owner
-approves them with the plan, and each is named again in the pull request that adds it
+Date: 2026-10-21 · Status: accepted, approved by the owner on 27 October 2026 with the plan for
+milestone 5 (docs/milestone-5.md); the owner approves them with the plan, and each is named again in
+the pull request that adds it
 
 ## Context
 
@@ -28,8 +29,8 @@ request that adds this record.
   adds nothing for them.
 - **Services, not packages**, each in an account the owner opens: the domain, at Cloudflare's
   registrar; Cloudflare's Workers, R2, Durable Objects and Turnstile; the hosted Supabase project;
-  the mail provider; Google's OAuth client; and launch keys for Anthropic's API and the school's
-  gateway.
+  Resend, the mail provider; Google's OAuth client; and launch keys for Anthropic's API and the
+  school's gateway.
 - **Already dependencies**: `@supabase/supabase-js`; the `supabase` CLI, whose `link`, `db push`,
   `config push` and `test db --linked` the `database` workflow and item 14 use;
   `@cloudflare/workers-types`; the AI SDK.

@@ -1,7 +1,7 @@
 # 0105. Deleting an account, finished
 
-Date: 2026-10-21 · Status: proposed, with the plan for milestone 5 (docs/milestone-5.md); finishes
-0095
+Date: 2026-10-21 · Status: accepted, approved by the owner on 27 October 2026 with the plan for
+milestone 5 (docs/milestone-5.md); finishes 0095
 
 ## Context
 
@@ -49,5 +49,6 @@ account is gone, or how the function sees a file left, and it names no test.
   way out.
 - An unsent save on another device outlives the deletion, so a person who deleted their account
   by mistake may still find their latest work in one browser. It is the only undo there is.
-- The account service's backups, where the project's plan keeps them, hold a deleted account until
-  they expire. The privacy page says so and for how long.
+- The project is on Free, which keeps no backups (decision 0104), so a deleted account is gone at
+  once and no copy outlives it. The privacy page says so. If the project ever moves to a plan with
+  backups, the page says how long they hold a deleted account.
