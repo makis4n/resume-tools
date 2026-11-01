@@ -2,9 +2,9 @@
 # ghcr.io/makis4n/resume-tools-ats; for development, run `uv run ats-serve` instead.
 # Base images are pinned by digest, with the tag alongside for reading.
 
-FROM ghcr.io/astral-sh/uv:0.12.21@sha256:a7aed3216253ee804de3e2d8afa5073baa1a177335345d43845cd4165e43b711 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 AS uv
 
-FROM python:3.12-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f AS build
+FROM python:3.12-slim@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159 AS build
 COPY --from=uv /uv /usr/local/bin/uv
 # The image's own Python, not one uv downloads, and a venv that holds its own copy of the package
 # so that it is the only thing the final stage needs.
@@ -16,7 +16,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable
 
-FROM python:3.12-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f
+FROM python:3.12-slim@sha256:aa943ce411423c7582288f18707ff66eddcbaeb510502d747a72aeb34f30d159
 RUN groupadd --system --gid 10001 ats \
   && useradd --system --no-create-home --uid 10001 --gid 10001 ats
 COPY --from=build /app/.venv /app/.venv
